@@ -6,4 +6,5 @@
 ## SavedVariables: SimpleFrameAnchorDB
 
 SimpleFrameAnchor_Castbars.lua
+SimpleFrameAnchor_XPBar.lua
 SimpleFrameAnchor.lua

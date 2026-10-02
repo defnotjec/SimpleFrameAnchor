@@ -485,11 +485,48 @@ local function buildCastbars(wrapper)
     return -y + UI.PAD
 end
 
+local function buildXPBar(wrapper)
+    local X = ns.XP
+    local y = -UI.PAD
+    y = y - makeSection(wrapper, "Experience Bar", y)
+    y = y - makeInfo(wrapper,
+        "A standalone XP bar that will wear the EUI Forever / Professions skins (in-game art). " ..
+        "This first pass is the bar + text; the Forever frame (cooking default), Professions " ..
+        "frame, ticks and text options are being added next.", y)
+    y = y - makeToggle(wrapper, "Show the experience bar", y,
+        function() return X and X.Get().enabled end,
+        function(v) if X then X.SetEnabled(v) end end,
+        "Show a standalone XP bar managed by SimpleFrameAnchor.")
+    y = y - 4
+    y = y - makeSlider(wrapper, "Horizontal (X)", y, -800, 800, 1,
+        function() return X and X.Get().x or 0 end,
+        function(v) if X then X.SetValue("x", v) end end,
+        function(v) return tostring(math.floor(v + 0.5)) end)
+    y = y - makeSlider(wrapper, "Vertical (Y)", y, -800, 800, 1,
+        function() return X and X.Get().y or 0 end,
+        function(v) if X then X.SetValue("y", v) end end,
+        function(v) return tostring(math.floor(v + 0.5)) end)
+    y = y - makeSlider(wrapper, "Width", y, 120, 800, 1,
+        function() return X and X.Get().width or 360 end,
+        function(v) if X then X.SetValue("width", v) end end,
+        function(v) return tostring(math.floor(v + 0.5)) end)
+    y = y - makeSlider(wrapper, "Height", y, 6, 40, 1,
+        function() return X and X.Get().height or 14 end,
+        function(v) if X then X.SetValue("height", v) end end,
+        function(v) return tostring(math.floor(v + 0.5)) end)
+    y = y - makeToggle(wrapper, "Show text", y,
+        function() return X and X.Get().showText end,
+        function(v) if X then X.SetValue("showText", v) end end,
+        "Level and XP percentage on the bar.")
+    return -y + UI.PAD
+end
+
 local SECTIONS = {
     { key = "PlayerFrame",             title = "Player Frame",     desc = "Where the player unit frame sits.",  build = function(w) return buildSubjectPane("PlayerFrame", w) end },
     { key = "TargetFrame",             title = "Target Frame",     desc = "Where the target unit frame sits.",  build = function(w) return buildSubjectPane("TargetFrame", w) end },
     { key = "EssentialCooldownViewer", title = "Cooldown Manager", desc = "Move the Cooldown Manager itself. Off by default -- Edit Mode owns it.", build = function(w) return buildSubjectPane("EssentialCooldownViewer", w) end },
     { key = "castbars",                title = "Cast Bars",        desc = "Legion Classic cast bar style for the default cast bars.", build = buildCastbars },
+    { key = "xpbar",                   title = "Experience Bar",   desc = "A standalone XP bar with the EUI Forever / Professions skins.", build = buildXPBar },
     { key = "general",                 title = "General",          desc = "Presets, reset and notes.",          build = buildGeneral },
 }
 local sectionByKey = {}
