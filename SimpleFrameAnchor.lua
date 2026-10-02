@@ -504,6 +504,9 @@ local function buildXPBar(wrapper)
         },
         function() return X and X.Get().frame or "forever" end,
         function(v) if X then X.SetValue("frame", v) end end)
+    y = y - makeDropdown(wrapper, "Profession fill", y, (X and X.ProfessionOptions()) or { { value = "none", text = "None" } },
+        function() return X and X.Get().profession or "none" end,
+        function(v) if X then X.SetValue("profession", v) end end)
     y = y - 4
     y = y - makeSlider(wrapper, "Horizontal (X)", y, -800, 800, 1,
         function() return X and X.Get().x or 0 end,
@@ -722,6 +725,73 @@ local function probeCastbars()
 end
 
 -- ============================================================================
+--  [DIAG] general dump-to-disk -> SimpleFrameAnchorDB._dump
+--    /sfa dump              SFA state: XP-art atlas availability, SFA_XPBar + cast
+--                           bar frames, config snapshot.
+--    /sfa dump <Frame|Path> KRD-style regions+children of any frame (dotted path ok).
+--  Writes to our SavedVariable (flushes on /reload); read whichever is present.
+-- ============================================================================
+local function diagResolvePath(path)
+    local obj
+    for part in path:gmatch("[^.]+") do
+        if obj == nil then obj = _G[part]
+        elseif type(obj) == "table" then obj = obj[part]
+        else return nil end
+    end
+    return obj
+end
+
+local function diagDumpFrame(f, out, tag)
+    if not (f and f.GetObjectType) then out[#out + 1] = tag .. " = NIL"; return end
+    local w = f.GetWidth and f:GetWidth()
+    local h = f.GetHeight and f:GetHeight()
+    out[#out + 1] = tag .. " | type=" .. (f:GetObjectType() or "?")
+        .. " shown=" .. tostring(f.IsShown and f:IsShown())
+        .. " size=" .. tostring(w and math.floor(w)) .. "x" .. tostring(h and math.floor(h))
+    if f.GetRegions then
+        for i = 1, select("#", f:GetRegions()) do
+            local r = select(i, f:GetRegions())
+            if r and r.GetObjectType then
+                local layer, sub = (r.GetDrawLayer and r:GetDrawLayer())
+                out[#out + 1] = "   region[" .. i .. "] " .. r:GetObjectType()
+                    .. " layer=" .. tostring(layer) .. ":" .. tostring(sub)
+                    .. " atlas=" .. tostring(r.GetAtlas and r:GetAtlas())
+                    .. " tex=" .. tostring(r.GetTexture and r:GetTexture())
+                    .. " shown=" .. tostring(r.IsShown and r:IsShown())
+            end
+        end
+    end
+    for i = 1, (f.GetNumChildren and f:GetNumChildren() or 0) do
+        local c = select(i, f:GetChildren())
+        if c and c.GetObjectType then
+            out[#out + 1] = "   child " .. (c.GetDebugName and c:GetDebugName() or "?")
+                .. " " .. c:GetObjectType() .. " shown=" .. tostring(c.IsShown and c:IsShown())
+        end
+    end
+end
+
+local function sfaDump(arg)
+    ensureDB()
+    local out = { "SFA dump | WOW_PROJECT_ID=" .. tostring(WOW_PROJECT_ID) }
+    if arg and arg ~= "" then
+        local f = arg:find("%.") and diagResolvePath(arg) or _G[arg]
+        diagDumpFrame(f, out, arg)
+    else
+        for _, a in ipairs({ "UI-HUD-ActionBar-Frame", "Professions-skillbar-frame",
+            "Skillbar_Fill_Flipbook_Cooking", "Skillbar_Fill_Flipbook_Jewelcrafting" }) do
+            out[#out + 1] = "atlas " .. a .. " = " .. tostring(C_Texture.GetAtlasInfo(a) ~= nil)
+        end
+        diagDumpFrame(_G.SFA_XPBar, out, "SFA_XPBar")
+        diagDumpFrame(_G.PlayerCastingBarFrame, out, "PlayerCastingBarFrame")
+        diagDumpFrame(TargetFrame and TargetFrame.spellbar, out, "TargetFrame.spellbar")
+        out[#out + 1] = "DB.xpbar = " .. (SimpleFrameAnchorDB.xpbar and "present" or "nil")
+        out[#out + 1] = "DB.castbars = " .. (SimpleFrameAnchorDB.castbars and "present" or "nil")
+    end
+    SimpleFrameAnchorDB._dump = out
+    print("|cff66ccffSimpleFrameAnchor|r: dump written (" .. #out .. " lines) to SavedVariables; |cffffff00/reload|r to flush.")
+end
+
+-- ============================================================================
 --  Events + slash
 -- ============================================================================
 local ev = CreateFrame("Frame")
@@ -753,7 +823,14 @@ end)
 SLASH_SIMPLEFRAMEANCHOR1 = "/simpleframeanchor"
 SLASH_SIMPLEFRAMEANCHOR2 = "/sfa"
 SlashCmdList.SIMPLEFRAMEANCHOR = function(msg)
-    msg = (msg or ""):lower():gsub("%s+", "")
+    msg = msg or ""
+    -- "dump [Frame|Path]" is parsed BEFORE lowercasing so a frame name keeps its case.
+    local dumpArg = msg:match("^%s*[Dd][Uu][Mm][Pp]%s*(.-)%s*$")
+    if dumpArg ~= nil then
+        sfaDump(dumpArg)
+        return
+    end
+    msg = msg:lower():gsub("%s+", "")
     if msg == "probe" then
         probeCastbars()
     elseif msg == "reset" then

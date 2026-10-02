@@ -27,8 +27,8 @@ local DEFAULTS = {
     y          = -120,
     width      = 360,
     height     = 14,
-    frame      = "forever",   -- "forever" | "prof"  (default per request)
-    profession = "cooking",   -- flipbook profession (default per request)
+    frame      = "forever",   -- "forever" | "prof" | "none"  (default per request)
+    profession = "Cooking",   -- flipbook profession atlas suffix, or "none" (default per request)
     showTicks  = true,
     showText   = true,
 }
@@ -106,6 +106,7 @@ end
 
 -- ---- the bar ----------------------------------------------------------------
 local bar   -- lazily created holder Frame (bar.Fill / bar.Rested / bar.BG / bar.Text)
+local PlayFlipOnce   -- defined in the flipbook section; used by UpdateXP below
 
 local function AtMaxLevel()
     if IsPlayerAtEffectiveMaxLevel and IsPlayerAtEffectiveMaxLevel() then return true end
@@ -131,6 +132,15 @@ local function UpdateXP()
 
     bar.Fill:SetMinMaxValues(0, maxXP)
     bar.Fill:SetValue(cur)
+
+    -- Profession flipbook: one pass on each XP gain (a level-up is a gain too).
+    if bar._fvFlipSmart then
+        local lv = bar._lastLevel
+        if lv and (level > lv or (level == lv and cur > (bar._lastXP or 0))) then
+            PlayFlipOnce()
+        end
+    end
+    bar._lastXP, bar._lastLevel = cur, level
 
     if rested > 0 then
         bar.Rested:SetMinMaxValues(0, maxXP)
@@ -181,6 +191,128 @@ local function ApplySkin()
     end
 end
 
+-- ---- profession flipbook fill (ported from EllesmereUI ApplyXPFlipFill) ------
+-- The client's skill-bar art (2 columns x rows, 856x34 frames) tiled over the
+-- XP fill, masked to the fill's right edge, one 2 s pass played on each XP gain.
+local FLIP_MAX_TILES = 24
+local FLIP_SLOW_IN = {
+    Skillbar_Fill_Flipbook_Jewelcrafting = true,
+    Skillbar_Fill_Flipbook_Leatherworking = true,
+}
+
+local function FlipStatic(tex, info, rows)
+    tex:SetTexture(info.file or info.filename)
+    local l, r, t, b = info.leftTexCoord, info.rightTexCoord, info.topTexCoord, info.bottomTexCoord
+    tex:SetTexCoord(l, l + (r - l) / 2, t, t + (b - t) / rows)
+end
+
+local function NewFlipTile(parent, mask)
+    local t = {}
+    t.idle = parent:CreateTexture(nil, "OVERLAY", nil, 0)
+    t.flip = parent:CreateTexture(nil, "OVERLAY", nil, 1)
+    t.idle:AddMaskTexture(mask); t.flip:AddMaskTexture(mask)
+    local function Book(group)
+        local fb = group:CreateAnimation("FlipBook")
+        fb:SetTarget(t.flip); fb:SetDuration(2); fb:SetFlipBookColumns(2)
+        fb:SetFlipBookFrameWidth(0); fb:SetFlipBookFrameHeight(0)
+        return fb
+    end
+    local once = parent:CreateAnimationGroup()
+    once._fb = Book(once)
+    local fIn = once:CreateAnimation("Alpha"); fIn:SetTarget(t.flip); fIn:SetFromAlpha(0); fIn:SetToAlpha(1); once._fadeIn = fIn
+    local fOut = once:CreateAnimation("Alpha"); fOut:SetTarget(t.flip); fOut:SetOrder(2)
+    fOut:SetFromAlpha(1); fOut:SetToAlpha(0); fOut:SetStartDelay(0.2); fOut:SetDuration(0.5)
+    t.once = once
+    local loop = parent:CreateAnimationGroup(); loop._fb = Book(loop); loop:SetLooping("REPEAT"); t.loop = loop
+    return t
+end
+
+local function HideFlipTile(t) t.once:Stop(); t.loop:Stop(); t.flip:Hide(); t.idle:Hide() end
+
+local function PlaceFlipLayer(r, parent, x, tw)
+    r:ClearAllPoints()
+    r:SetPoint("TOPLEFT", parent, "TOPLEFT", x, 0)
+    r:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", x, 0)
+    r:SetWidth(tw)
+end
+
+local function FlipAtlasFor(d)
+    if not d.profession or d.profession == "none" then return nil end
+    return "Skillbar_Fill_Flipbook_" .. d.profession
+end
+
+local function ApplyFlipFill()
+    if not bar then return end
+    local d = xdb()
+    local fill = bar.Fill
+    local tex = fill:GetStatusBarTexture()
+    local atlas = FlipAtlasFor(d)
+    local info = atlas and C_Texture.GetAtlasInfo(atlas)
+    local tiles = bar._fvTiles
+    if not info then
+        if bar._fvFlipOn then
+            bar._fvFlipOn, bar._fvFlipSmart, bar._fvTileN, bar._fvFlipAtlas = nil, nil, nil, nil
+            if tiles then for i = 1, #tiles do HideFlipTile(tiles[i]) end end
+            if tex then tex:SetAlpha(1) end
+        end
+        return
+    end
+    local mask = bar._fvFlipMask
+    if not tiles then
+        mask = fill:CreateMaskTexture()
+        mask:SetTexture("Interface\\Buttons\\WHITE8x8",
+            "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE", "NEAREST")
+        bar._fvFlipMask = mask
+        tiles = {}; bar._fvTiles = tiles
+    end
+    mask:ClearAllPoints()
+    mask:SetPoint("RIGHT", tex, "RIGHT")   -- rides the fill edge on every value change
+    mask:SetSize(bar:GetSize())
+
+    local rows = math.max(1, math.floor(info.height / 34 + 0.5))
+    local bw, bh = fill:GetSize()
+    local n, tw = 1, bw
+    if bh > 0 then
+        tw = math.max(1, math.floor(bh * (info.width / 2) / (info.height / rows) + 0.5))
+        n = math.max(1, math.ceil(bw / tw))
+        if n > FLIP_MAX_TILES then n = FLIP_MAX_TILES; tw = bw / n end
+    end
+    local resync = n ~= bar._fvTileN or atlas ~= bar._fvFlipAtlas
+    for i = #tiles + 1, n do tiles[i] = NewFlipTile(fill, mask) end
+    for i = n + 1, #tiles do HideFlipTile(tiles[i]) end
+    local fadeIn = FLIP_SLOW_IN[atlas] and 0.5 or 0.25
+    for i = 1, n do
+        local t = tiles[i]
+        if resync then t.once:Stop(); t.loop:Stop() end
+        if t.atlas ~= atlas then
+            t.once._fb:SetFlipBookRows(rows); t.once._fb:SetFlipBookFrames(rows * 2)
+            t.loop._fb:SetFlipBookRows(rows); t.loop._fb:SetFlipBookFrames(rows * 2)
+            t.once._fadeIn:SetDuration(fadeIn)
+            t.flip:SetAtlas(atlas)
+            FlipStatic(t.idle, info, rows)
+            t.atlas = atlas
+        end
+        local x = (i - 1) * tw
+        PlaceFlipLayer(t.flip, fill, x, tw)
+        PlaceFlipLayer(t.idle, fill, x, tw)
+        t.idle:Show()
+    end
+    bar._fvFlipOn, bar._fvTileN, bar._fvFlipAtlas = true, n, atlas
+    if tex then tex:SetAlpha(0) end
+    bar._fvFlipSmart = true   -- play one pass on each XP gain
+    for i = 1, n do
+        local t = tiles[i]
+        t.loop:Stop()
+        t.flip:SetAlpha(0); t.flip:Show()
+    end
+end
+
+PlayFlipOnce = function()
+    local tiles, n = bar and bar._fvTiles, bar and bar._fvTileN
+    if not (tiles and n) or (tiles[1] and tiles[1].once:IsPlaying()) then return end
+    for i = 1, n do tiles[i].once:Play() end
+end
+
 local function Layout()
     if not bar then return end
     local d = xdb()
@@ -188,6 +320,7 @@ local function Layout()
     bar:ClearAllPoints()
     bar:SetPoint("CENTER", UIParent, "CENTER", d.x, d.y)
     ApplySkin()
+    ApplyFlipFill()
 end
 
 local function EnsureBar()
@@ -234,6 +367,21 @@ local function EnsureBar()
 end
 
 function XP.ForeverAvailable() return ForeverOK() end
+
+-- Professions whose skill-bar flipbook atlas exists on this client (for the picker).
+local PROFESSIONS = {
+    "Cooking", "Alchemy", "Blacksmithing", "Enchanting", "Engineering", "Herbalism",
+    "Inscription", "Jewelcrafting", "Leatherworking", "Mining", "Skinning", "Tailoring", "Fishing",
+}
+function XP.ProfessionOptions()
+    local opts = { { value = "none", text = "None (plain fill)" } }
+    for _, p in ipairs(PROFESSIONS) do
+        if C_Texture.GetAtlasInfo("Skillbar_Fill_Flipbook_" .. p) then
+            opts[#opts + 1] = { value = p, text = p }
+        end
+    end
+    return opts
+end
 
 -- ---- public API -------------------------------------------------------------
 function XP.Get() return xdb() end
