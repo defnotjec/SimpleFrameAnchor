@@ -450,10 +450,38 @@ local function buildCastbars(wrapper)
         function(v) if CB then CB.SetEnabled(v) end end,
         "Applies the Legion skin immediately when turned on.\nTurn off then /reload to restore Blizzard's default art.")
     y = y - 10
+
+    -- Per-bar move controls (Target / Focus). ToT is added once its bar is built.
+    local MOVERS = {
+        { key = "target", label = "Target" },
+        { key = "focus",  label = "Focus" },
+    }
+    for _, m in ipairs(MOVERS) do
+        y = y - makeSection(wrapper, m.label .. " Cast Bar", y)
+        y = y - makeToggle(wrapper, "Move the " .. m.label .. " cast bar", y,
+            function() return CB and CB.GetMove(m.key).enabled end,
+            function(v) if CB then CB.SetMoveEnabled(m.key, v) end end,
+            "Re-anchor this cast bar to a fixed screen position.\nTurn off then /reload to hand it back to Blizzard.")
+        y = y - makeSlider(wrapper, "Horizontal (X)", y, -800, 800, 1,
+            function() return CB and CB.GetMove(m.key).x or 0 end,
+            function(v) if CB then CB.SetMovePos(m.key, "x", v) end end,
+            function(v) return tostring(math.floor(v + 0.5)) end)
+        y = y - makeSlider(wrapper, "Vertical (Y)", y, -800, 800, 1,
+            function() return CB and CB.GetMove(m.key).y or 0 end,
+            function(v) if CB then CB.SetMovePos(m.key, "y", v) end end,
+            function(v) return tostring(math.floor(v + 0.5)) end)
+        y = y - makeToggle(wrapper, "Show test frame (drag to position)", y,
+            function() return CB and CB.IsTestShown(m.key) end,
+            function(v) if CB then CB.SetTest(m.key, v) end end,
+            "Show a draggable mock cast bar so you can place it without waiting for a real cast.\nDragging it updates the X/Y above.")
+        y = y - 6
+    end
+
     y = y - makeSection(wrapper, "Notes", y)
     y = y - makeInfo(wrapper,
-        "Show/move for the Target, Target-of-Target and Focus cast bars is coming next. " ..
-        "Turning the style off needs a /reload to fully restore the default artwork.", y)
+        "Move controls re-anchor the native bar; target/focus something that casts to see it. " ..
+        "Target-of-Target has no native cast bar -- a created one is coming next. " ..
+        "Turning style/move off needs a /reload to fully restore the defaults.", y)
     return -y + UI.PAD
 end
 
@@ -483,7 +511,7 @@ local function createOptionsWindow()
     f:SetScript("OnDragStart", f.StartMoving)
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
     f:SetScript("OnMouseDown", closeMenu)
-    f:SetScript("OnHide", closeMenu)
+    f:SetScript("OnHide", function() closeMenu(); if ns.CB and ns.CB.HideAllTests then ns.CB.HideAllTests() end end)
     f:Hide()
     SolidTex(f, "BACKGROUND", 0.06, 0.06, 0.07, 0.97):SetAllPoints(f)
     MakeBorder(f, 0, 0, 0, 1)

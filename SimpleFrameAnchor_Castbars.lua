@@ -228,10 +228,171 @@ function CB.SetEnabled(on)
     end
 end
 
+-- ============================================================================
+--  Show / Move  (Target, Focus -- native bars; ToT created separately)
+--  Re-anchor the native spell bar to UIParent at a saved offset and reassert it
+--  whenever Blizzard re-shows/re-anchors it. If this proves not to stick on this
+--  client (protected layout), these bars move to the own-bar path like ToT.
+-- ============================================================================
+local MOVE_KEYS = { "target", "focus" }
+local MOVE_BAR = {
+    target = function() return TargetFrame and TargetFrame.spellbar end,
+    focus  = function() return FocusFrame and FocusFrame.spellbar end,
+}
+local MOVE_DEFAULT = { target = { x = 0, y = -180 }, focus = { x = 0, y = -210 } }
+
+local function mcfg(key)
+    local d = cdb()
+    d.move = d.move or {}
+    if not d.move[key] then
+        local def = MOVE_DEFAULT[key] or { x = 0, y = -200 }
+        d.move[key] = { enabled = false, x = def.x, y = def.y }
+    end
+    return d.move[key]
+end
+
+local function applyMove(key)
+    local bar = MOVE_BAR[key] and MOVE_BAR[key]()
+    if not bar then return end
+    local cfg = mcfg(key)
+    if cfg.enabled then
+        bar.LCC_moved = true
+        bar:ClearAllPoints()
+        bar:SetPoint("CENTER", UIParent, "CENTER", cfg.x, cfg.y)
+    end
+end
+
+local moveHooked = {}
+local function hookMove(key)
+    local bar = MOVE_BAR[key] and MOVE_BAR[key]()
+    if not bar or moveHooked[key] then return end
+    moveHooked[key] = true
+    -- Reassert after Blizzard finishes its own layout for this show.
+    bar:HookScript("OnShow", function()
+        if mcfg(key).enabled and C_Timer and C_Timer.After then
+            C_Timer.After(0, function() applyMove(key) end)
+        end
+    end)
+end
+
+function CB.MoveApplyAll()
+    for _, key in ipairs(MOVE_KEYS) do
+        hookMove(key)
+        applyMove(key)
+    end
+end
+
+local positionTest   -- defined in the test/preview section below
+
+function CB.GetMove(key) return mcfg(key) end
+
+function CB.SetMoveEnabled(key, on)
+    mcfg(key).enabled = on and true or false
+    hookMove(key)
+    applyMove(key)
+    if not on then
+        print("|cff66ccffSimpleFrameAnchor|r: " .. key .. " cast bar position released -- |cffffff00/reload|r to restore default.")
+    end
+end
+
+function CB.SetMovePos(key, axis, v)
+    mcfg(key)[axis] = v
+    applyMove(key)
+    positionTest(key)   -- keep any visible preview in sync with the sliders
+end
+
+-- ---- test / preview frame ---------------------------------------------------
+-- A draggable Legion-styled mock bar so you can position without a live cast.
+local testFrames = {}
+local TEST_LABEL = { target = "Target Cast Bar", focus = "Focus Cast Bar", tot = "ToT Cast Bar" }
+
+positionTest = function(key)   -- forward-declared above (used by SetMovePos)
+    local f = testFrames[key]
+    if not f then return end
+    local cfg = mcfg(key)
+    f:ClearAllPoints()
+    f:SetPoint("CENTER", UIParent, "CENTER", cfg.x, cfg.y)
+end
+
+local function buildTest(key)
+    if testFrames[key] then return testFrames[key] end
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(150, 10)
+    f:SetFrameStrata("HIGH")
+    f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
+    f:SetClampedToScreen(true)
+    f:Hide()
+
+    local bg = f:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(f); bg:SetColorTexture(0, 0, 0, 0.5)
+
+    local fill = f:CreateTexture(nil, "BORDER"); fill:SetTexture(TEX.fill); fill:SetHorizTile(true)
+    fill:SetVertexColor(COL.standard[1], COL.standard[2], COL.standard[3])
+    fill:SetPoint("TOPLEFT"); fill:SetPoint("BOTTOMLEFT")
+
+    local border = f:CreateTexture(nil, "ARTWORK"); border:SetTexture(TEX.borderSmall)
+    border:SetPoint("TOPLEFT", -23, 20); border:SetPoint("TOPRIGHT", 23, 20); border:SetHeight(49)
+
+    local spark = f:CreateTexture(nil, "OVERLAY"); spark:SetTexture(TEX.spark)
+    spark:SetBlendMode("ADD"); spark:SetSize(32, 32)
+
+    local icon = f:CreateTexture(nil, "OVERLAY")
+    icon:SetTexture([[Interface\ICONS\Spell_Nature_Lightning]])
+    icon:SetPoint("RIGHT", f, "LEFT", -5, 0); icon:SetSize(16, 16); icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    local txt = f:CreateFontString(nil, "OVERLAY"); txt:SetFontObject("SystemFont_Shadow_Small")
+    txt:SetPoint("TOPLEFT", 0, 4); txt:SetPoint("TOPRIGHT", 0, 4); txt:SetHeight(16); txt:SetJustifyH("CENTER")
+    txt:SetText(TEST_LABEL[key] or "Cast Bar")
+
+    local hint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    hint:SetPoint("BOTTOM", f, "TOP", 0, 24); hint:SetText("|cffaaaaaadrag to move|r")
+
+    local function layoutFill()
+        local w = f:GetWidth() or 150
+        fill:SetWidth(math.max(1, w * 0.65))
+        spark:ClearAllPoints(); spark:SetPoint("CENTER", f, "LEFT", w * 0.65, 0)
+    end
+    f:SetScript("OnSizeChanged", layoutFill)
+    layoutFill()
+
+    f:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local cx, cy = self:GetCenter()
+        local ux, uy = UIParent:GetCenter()
+        if cx and ux then
+            local cfg = mcfg(key)
+            cfg.x = math.floor(cx - ux + 0.5)
+            cfg.y = math.floor(cy - uy + 0.5)
+            applyMove(key)
+        end
+        positionTest(key)
+    end)
+
+    testFrames[key] = f
+    return f
+end
+
+function CB.IsTestShown(key)
+    return (testFrames[key] and testFrames[key]:IsShown()) and true or false
+end
+
+function CB.SetTest(key, on)
+    local f = buildTest(key)
+    if on then positionTest(key); f:Show() else f:Hide() end
+end
+
+function CB.HideAllTests()
+    for _, f in pairs(testFrames) do f:Hide() end
+end
+
 -- ---- events -----------------------------------------------------------------
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")   -- boss frames appear on entering instances
 ev:SetScript("OnEvent", function()
-    if C_Timer and C_Timer.After then C_Timer.After(0.3, CB.ApplyAll) else CB.ApplyAll() end
+    local function run()
+        CB.ApplyAll()
+        CB.MoveApplyAll()
+    end
+    if C_Timer and C_Timer.After then C_Timer.After(0.3, run) else run() end
 end)
