@@ -33,13 +33,17 @@ local DEFAULTS = {
     profession = "Cooking",   -- flipbook profession atlas suffix, or "none" (default per request)
     stretch    = true,        -- stretch one copy of the profession art across the whole bar
                               -- (default); off tiles it at the art's native proportions
-    showTicks   = true,       -- 10% dividers
-    show5       = false,      -- extra 5% dividers (dashed, lighter)
+    showTicks   = true,       -- 10% dividers (use the divider-text color)
+    show5       = false,      -- extra 5% dividers
+    divider5Style = "dashed", -- "solid" | "dashed" | "dotted" | "none"
+    tick5Color  = { 220 / 255, 167 / 255, 127 / 255 },   -- bronze (EUI default)
     dividerText = true,       -- % labels at each 10% divider
     dividerTextX     = 0,     -- label horizontal offset
     dividerTextY     = 2,     -- label vertical offset above the bar
-    dividerTextColor = { 1, 1, 1 },
+    dividerTextColor = { 1, 1, 1 },   -- also used for the 10% lines
     showText    = true,       -- level / XP% on the bar
+    textX       = 0,          -- bar text offset
+    textY       = 10,         -- default 10px higher
 }
 
 local function xdb()
@@ -333,48 +337,69 @@ PlayFlipOnce = function()
     for i = 1, n do tiles[i].once:Play() end
 end
 
--- Divider ticks: solid lines every 10%, optional dashed lines every 5%, optional %
--- labels -- all on the overlay (above the fill/flipbook). Width comes from the holder's
--- SetSize (resolved now), not the anchored fill's GetWidth (still 0 this frame).
+-- Position the bar's level/XP% text (its own X/Y offset).
+local function PositionText()
+    if not (bar and bar.Text and bar.Overlay) then return end
+    local d = xdb()
+    bar.Text:ClearAllPoints()
+    bar.Text:SetPoint("CENTER", bar.Overlay, "CENTER", d.textX or 0, d.textY or 0)
+end
+
+-- Divider ticks (EUI model): full 10% lines in the divider-text color; optional 5% lines
+-- in their own colour with a style -- solid / dashed / dotted / none. All on the overlay
+-- (above the fill/flipbook). Width/height come from the holder's SetSize (resolved now),
+-- not the anchored fill's GetWidth (still 0 this frame). Segments share one pool.
 local function DrawTicks()
     if not (bar and bar.Overlay) then return end
     local d = xdb()
-    bar._ticks = bar._ticks or {}
+    bar._tickSegs = bar._tickSegs or {}
     bar._tickText = bar._tickText or {}
-    for _, t in ipairs(bar._ticks) do t:Hide() end
+    for _, t in ipairs(bar._tickSegs) do t:Hide() end
     for _, fs in ipairs(bar._tickText) do fs:Hide() end
+    if not d.showTicks then return end
 
     local inset = ((d.frame == "forever") and ForeverOK()) and RING_LINE or 0
     local w = (d.width or bar:GetWidth() or 0) - 2 * inset
-    if w <= 0 then return end
+    local h = (d.height or bar:GetHeight() or 0) - 2 * inset
+    if w <= 0 or h <= 0 then return end
 
-    local ti = 0
-    local function line(pct, dashed)
-        ti = ti + 1
-        local t = bar._ticks[ti]
-        if not t then
-            t = bar.Overlay:CreateTexture(nil, "OVERLAY", nil, 3)
-            t:SetWidth(1)
-            bar._ticks[ti] = t
-        end
-        -- 10% solid/opaque; 5% lighter + slightly inset (approx "dashed")
-        if dashed then t:SetColorTexture(1, 1, 1, 0.45) else t:SetColorTexture(0, 0, 0, 0.7) end
-        local x = (pct / 100) * w
-        local pad = dashed and 1 or 0
+    local tenC = d.dividerTextColor or { 1, 1, 1 }
+    local fiveC = d.tick5Color or { 220 / 255, 167 / 255, 127 / 255 }
+    local style5 = d.divider5Style or "dashed"
+
+    local segIdx = 0
+    local function seg(x, yTop, segH, c)
+        segIdx = segIdx + 1
+        local t = bar._tickSegs[segIdx]
+        if not t then t = bar.Overlay:CreateTexture(nil, "OVERLAY", nil, 3); bar._tickSegs[segIdx] = t end
+        t:SetWidth(1)
+        t:SetColorTexture(c[1], c[2], c[3], c[4] or 0.9)
         t:ClearAllPoints()
-        t:SetPoint("TOP", bar.Fill, "TOPLEFT", x, -pad)
-        t:SetPoint("BOTTOM", bar.Fill, "BOTTOMLEFT", x, pad)
+        t:SetPoint("TOPLEFT", bar.Fill, "TOPLEFT", x, -yTop)
+        t:SetHeight(math.max(1, segH))
         t:Show()
     end
 
-    if d.show5 then
-        for p = 5, 95, 10 do line(p, true) end
-    end
-    if d.showTicks then
-        for p = 10, 90, 10 do line(p, false) end
+    -- 5% lines (the odd marks) with the chosen style.
+    if d.show5 and style5 ~= "none" then
+        local dashLen = (style5 == "dotted") and 1 or 2
+        local step = dashLen + 2
+        for p = 5, 95, 10 do
+            local x = (p / 100) * w
+            if style5 == "solid" then
+                seg(x, 0, h, fiveC)
+            else
+                local yy = 0
+                while yy < h do seg(x, yy, math.min(dashLen, h - yy), fiveC); yy = yy + step end
+            end
+        end
     end
 
-    if d.dividerText and d.showTicks then
+    -- 10% lines (full height, divider-text colour).
+    for p = 10, 90, 10 do seg((p / 100) * w, 0, h, tenC) end
+
+    -- % labels.
+    if d.dividerText then
         local n = 0
         for p = 10, 90, 10 do
             n = n + 1
@@ -385,8 +410,7 @@ local function DrawTicks()
                 bar._tickText[n] = fs
             end
             fs:SetText(p .. "%")
-            local tc = d.dividerTextColor or { 1, 1, 1 }
-            fs:SetTextColor(tc[1], tc[2], tc[3])
+            fs:SetTextColor(tenC[1], tenC[2], tenC[3])
             fs:ClearAllPoints()
             fs:SetPoint("BOTTOM", bar.Fill, "TOPLEFT", (p / 100) * w + (d.dividerTextX or 0), d.dividerTextY or 2)
             fs:Show()
@@ -403,6 +427,7 @@ local function Layout()
     ApplySkin()
     ApplyFlipFill()
     DrawTicks()
+    PositionText()
 end
 
 local function EnsureBar()

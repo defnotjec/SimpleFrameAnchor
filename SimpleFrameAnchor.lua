@@ -601,6 +601,7 @@ local function buildXPBar(wrapper)
     two(
         tog("Stretch fill", "stretch", "Stretch one copy of the art across the bar (default); off tiles it."),
         tog("Show text", "showText", "Level / XP% on the bar."))
+    two(sld("Text X", "textX", -300, 300), sld("Text Y", "textY", -100, 100))
 
     full(function(w, y) return makeSection(w, "Position & Size", y) end)
     two(sld("Position X", "x", -800, 800), sld("Position Y", "y", -800, 800))
@@ -610,14 +611,23 @@ local function buildXPBar(wrapper)
 
     full(function(w, y) return makeSection(w, "Dividers", y) end)
     two(
-        tog("Show dividers (10%)", "showTicks", "Solid lines every 10%."),
-        tog("5% lines", "show5", "Lighter lines every 5%."))
+        tog("Show dividers (10%)", "showTicks", "Full lines every 10%, in the divider text color."),
+        tog("5% lines", "show5", "Add lines at the 5% marks."))
     two(
-        tog("Divider text", "dividerText", "Percentage labels above the 10% dividers."),
-        function(p, y) return makeColorSwatch(p, "Text color", y,
+        function(p, y) return makeDropdown(p, "5% line style", y,
+            { { value = "dashed", text = "Dashed" }, { value = "dotted", text = "Dotted" },
+              { value = "solid", text = "Solid" }, { value = "none", text = "None" } },
+            function() return X and X.Get().divider5Style or "dashed" end,
+            function(v) if X then X.SetValue("divider5Style", v) end end) end,
+        function(p, y) return makeColorSwatch(p, "5% color", y,
+            function() return X and X.Get().tick5Color end,
+            function(r, g, b) if X then X.SetValue("tick5Color", { r, g, b }) end end) end)
+    two(
+        tog("Divider text", "dividerText", "Percentage labels (10% .. 90%) on the 10% lines."),
+        function(p, y) return makeColorSwatch(p, "Divider text color", y,
             function() return X and X.Get().dividerTextColor end,
             function(r, g, b) if X then X.SetValue("dividerTextColor", { r, g, b }) end end) end)
-    two(sld("Text offset X", "dividerTextX", -40, 40), sld("Text offset Y", "dividerTextY", -20, 20))
+    two(sld("Divider X", "dividerTextX", -40, 40), sld("Divider Y", "dividerTextY", -20, 20))
 
     return height()
 end
