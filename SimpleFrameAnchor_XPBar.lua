@@ -36,6 +36,8 @@ local DEFAULTS = {
     showTicks   = true,       -- 10% dividers
     show5       = false,      -- extra 5% dividers (dashed, lighter)
     dividerText = true,       -- % labels at each 10% divider
+    dividerTextY     = 2,     -- label vertical offset above the bar
+    dividerTextColor = { 1, 1, 1 },
     showText    = true,       -- level / XP% on the bar
 }
 
@@ -354,9 +356,10 @@ local function DrawTicks()
             t:SetWidth(1)
             bar._ticks[ti] = t
         end
-        t:SetColorTexture(0, 0, 0, dashed and 0.35 or 0.6)
+        -- 10% solid/opaque; 5% lighter + slightly inset (approx "dashed")
+        if dashed then t:SetColorTexture(1, 1, 1, 0.45) else t:SetColorTexture(0, 0, 0, 0.7) end
         local x = (pct / 100) * w
-        local pad = dashed and 3 or 0   -- 5% lines are shorter (approx "dashed")
+        local pad = dashed and 1 or 0
         t:ClearAllPoints()
         t:SetPoint("TOP", bar.Fill, "TOPLEFT", x, -pad)
         t:SetPoint("BOTTOM", bar.Fill, "BOTTOMLEFT", x, pad)
@@ -381,8 +384,10 @@ local function DrawTicks()
                 bar._tickText[n] = fs
             end
             fs:SetText(p)
+            local tc = d.dividerTextColor or { 1, 1, 1 }
+            fs:SetTextColor(tc[1], tc[2], tc[3])
             fs:ClearAllPoints()
-            fs:SetPoint("BOTTOM", bar.Fill, "TOPLEFT", (p / 100) * w, 1)
+            fs:SetPoint("BOTTOM", bar.Fill, "TOPLEFT", (p / 100) * w, d.dividerTextY or 2)
             fs:Show()
         end
     end

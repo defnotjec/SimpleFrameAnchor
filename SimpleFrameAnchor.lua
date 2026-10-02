@@ -156,9 +156,10 @@ end
 -- ============================================================================
 --  UI theme (matched to the DropChanceTooltip options panel)
 -- ============================================================================
-local UI = { W = 580, H = 452, SIDEBAR_W = 158, PAD = 16, ROW_H = 26, LABEL_W = 120 }
+local UI = { W = 740, H = 470, SIDEBAR_W = 158, PAD = 14, ROW_H = 24, LABEL_W = 96 }
 local ACCENT = { 0.40, 0.80, 1.00 }
 local FONT = "Fonts\\FRIZQT__.TTF"
+local FONT_SCALE = 0.90   -- trim all text slightly so the panel reads less "big"
 
 local optionsFrame
 local pageCache = {}          -- sectionKey -> wrapper frame
@@ -173,7 +174,7 @@ end
 
 local function MakeFont(parent, size, r, g, b, flags)
     local fs = parent:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(FONT, size, flags or "")
+    fs:SetFont(FONT, math.max(8, math.floor(size * FONT_SCALE + 0.5)), flags or "")
     fs:SetTextColor(r or 0.9, g or 0.9, b or 0.9, 1)
     return fs
 end
@@ -253,11 +254,14 @@ local function makeSlider(parent, text, y, minV, maxV, step, get, set, fmt)
     local bg = SolidTex(c, "BACKGROUND", 1, 1, 1, (rowIndex % 2 == 0) and 0.03 or 0.06); bg:SetAllPoints(c)
     local label = MakeFont(c, 13, 0.88, 0.88, 0.9); label:SetPoint("LEFT", 8, 0); label:SetText(text)
 
-    -- value box on the right
-    local vbox = CreateFrame("Frame", nil, c); vbox:SetSize(48, 18); vbox:SetPoint("RIGHT", -8, 0)
+    -- editable value box on the right (type a number for granular control)
+    local vbox = CreateFrame("Frame", nil, c); vbox:SetSize(50, 18); vbox:SetPoint("RIGHT", -8, 0)
     SolidTex(vbox, "BACKGROUND", 0.10, 0.10, 0.12, 1):SetAllPoints(vbox)
     MakeBorder(vbox, 0, 0, 0, 0.8)
-    local valfs = MakeFont(vbox, 12, ACCENT[1], ACCENT[2], ACCENT[3]); valfs:SetPoint("CENTER")
+    local vedit = CreateFrame("EditBox", nil, vbox); vedit:SetAllPoints(vbox)
+    vedit:SetFont(FONT, math.floor(12 * FONT_SCALE + 0.5), "")
+    vedit:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3], 1)
+    vedit:SetJustifyH("CENTER"); vedit:SetAutoFocus(false)
 
     local track = CreateFrame("Frame", nil, c)
     track:SetPoint("LEFT", c, "LEFT", UI.LABEL_W, 0); track:SetPoint("RIGHT", vbox, "LEFT", -10, 0); track:SetHeight(6)
@@ -280,8 +284,14 @@ local function makeSlider(parent, text, y, minV, maxV, step, get, set, fmt)
         local frac = (maxV > minV) and (value - minV) / (maxV - minV) or 0
         thumb:ClearAllPoints(); thumb:SetPoint("CENTER", track, "LEFT", frac * w, 0)
         fill:SetWidth(math.max(1, frac * w))
-        valfs:SetText(fmt and fmt(value) or tostring(value))
+        if not vedit:HasFocus() then vedit:SetText(fmt and fmt(value) or tostring(value)) end
     end
+    vedit:SetScript("OnEnterPressed", function(self)
+        local v = tonumber(self:GetText())
+        if v then value = clamp(v); layout(); set(value) end
+        self:ClearFocus()
+    end)
+    vedit:SetScript("OnEscapePressed", function(self) self:ClearFocus(); layout() end)
     local function fromCursor()
         local x = GetCursorPosition() / (track:GetEffectiveScale() or 1)
         local left = track:GetLeft() or 0
@@ -325,7 +335,8 @@ local function makeDropdown(parent, labelText, y, options, get, set)
     local bg = SolidTex(row, "BACKGROUND", 1, 1, 1, (rowIndex % 2 == 0) and 0.03 or 0.06); bg:SetAllPoints(row)
     local label = MakeFont(row, 13, 0.88, 0.88, 0.9); label:SetPoint("LEFT", 8, 0); label:SetText(labelText)
 
-    local btn = CreateFrame("Button", nil, row); btn:SetSize(210, 20); btn:SetPoint("RIGHT", -8, 0)
+    local btn = CreateFrame("Button", nil, row); btn:SetHeight(20)
+    btn:SetPoint("LEFT", row, "LEFT", UI.LABEL_W, 0); btn:SetPoint("RIGHT", row, "RIGHT", -8, 0)
     local bg = SolidTex(btn, "ARTWORK", 0.16, 0.16, 0.19, 1); bg:SetAllPoints(btn)
     MakeBorder(btn, 0, 0, 0, 0.8)
     local val = MakeFont(btn, 12, 0.9, 0.9, 0.9); val:SetPoint("LEFT", 8, 0); val:SetPoint("RIGHT", -18, 0); val:SetJustifyH("LEFT")
@@ -363,6 +374,39 @@ local function makeDropdown(parent, labelText, y, options, get, set)
         openMenu = m
     end)
 
+    if activeRefreshers then activeRefreshers[#activeRefreshers + 1] = refresh end
+    return H
+end
+
+-- ---- color swatch (opens Blizzard's ColorPickerFrame) -----------------------
+local function makeColorSwatch(parent, text, y, getColor, setColor)
+    local H = UI.ROW_H
+    local rowIndex = parent._rows or 0; parent._rows = rowIndex + 1
+    local row = CreateFrame("Button", nil, parent)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", UI.PAD, y); row:SetPoint("RIGHT", parent, "RIGHT", -UI.PAD, 0); row:SetHeight(H)
+    SolidTex(row, "BACKGROUND", 1, 1, 1, (rowIndex % 2 == 0) and 0.03 or 0.06):SetAllPoints(row)
+    local label = MakeFont(row, 13, 0.88, 0.88, 0.9); label:SetPoint("LEFT", 8, 0); label:SetText(text)
+    local sw = CreateFrame("Button", nil, row); sw:SetSize(22, 14); sw:SetPoint("RIGHT", -8, 0)
+    MakeBorder(sw, 0, 0, 0, 0.9)
+    local swtex = SolidTex(sw, "ARTWORK", 1, 1, 1, 1); swtex:SetAllPoints(sw)
+    local function refresh() local c = getColor() or { 1, 1, 1 }; swtex:SetColorTexture(c[1], c[2], c[3], 1) end
+    refresh()
+    local function open()
+        local c = getColor() or { 1, 1, 1 }
+        local function applied()
+            local r, g, b = ColorPickerFrame:GetColorRGB()
+            setColor(r, g, b); refresh()
+        end
+        if ColorPickerFrame.SetupColorPickerAndShow then
+            ColorPickerFrame:SetupColorPickerAndShow({ r = c[1], g = c[2], b = c[3], swatchFunc = applied, hasOpacity = false })
+        else
+            ColorPickerFrame.func = applied; ColorPickerFrame.hasOpacity = false
+            ColorPickerFrame.previousValues = { c[1], c[2], c[3] }
+            ColorPickerFrame:SetColorRGB(c[1], c[2], c[3])
+            ColorPickerFrame:Hide(); ColorPickerFrame:Show()
+        end
+    end
+    row:SetScript("OnClick", open); sw:SetScript("OnClick", open)
     if activeRefreshers then activeRefreshers[#activeRefreshers + 1] = refresh end
     return H
 end
@@ -498,73 +542,82 @@ local function buildCastbars(wrapper)
     return -y + UI.PAD
 end
 
+-- Two-column layout (POC of UX B): full() spans the width; two() places a left and a
+-- right control side by side. Each control is given its own half-width parent frame.
+local function Columns(wrapper)
+    local W = wrapper:GetWidth(); if not W or W < 50 then W = UI.W - UI.SIDEBAR_W - 12 end
+    local gap = 14
+    local colW = math.floor((W - gap) / 2)
+    local flowY = -UI.PAD
+    local function full(fn)
+        flowY = flowY - (fn(wrapper, flowY) or 0)
+    end
+    local function two(leftFn, rightFn)
+        local lf = CreateFrame("Frame", nil, wrapper)
+        lf:SetPoint("TOPLEFT", 0, flowY); lf:SetSize(colW, 1)
+        local hL = leftFn and (leftFn(lf, 0) or 0) or 0
+        local hR = 0
+        if rightFn then
+            local rf = CreateFrame("Frame", nil, wrapper)
+            rf:SetPoint("TOPLEFT", colW + gap, flowY); rf:SetSize(colW, 1)
+            hR = rightFn(rf, 0) or 0
+        end
+        flowY = flowY - math.max(hL, hR)
+    end
+    local function gap_(n) flowY = flowY - (n or 6) end
+    local function height() return -flowY + UI.PAD end
+    return full, two, gap_, height
+end
+
 local function buildXPBar(wrapper)
     local X = ns.XP
-    local y = -UI.PAD
-    y = y - makeSection(wrapper, "Experience Bar", y)
-    y = y - makeInfo(wrapper,
-        "A standalone XP bar that will wear the EUI Forever / Professions skins (in-game art). " ..
-        "This first pass is the bar + text; the Forever frame (cooking default), Professions " ..
-        "frame, ticks and text options are being added next.", y)
-    y = y - makeToggle(wrapper, "Show the experience bar", y,
-        function() return X and X.Get().enabled end,
-        function(v) if X then X.SetEnabled(v) end end,
-        "Show a standalone XP bar managed by SimpleFrameAnchor.")
-    y = y - makeToggle(wrapper, "Replace Blizzard's XP bar", y,
-        function() return X and X.Get().replace end,
-        function(v) if X then X.SetReplace(v) end end,
-        "Hide Blizzard's default status-tracking XP bar so only this one shows.\nTurn off then /reload to restore it.")
-    y = y - 4
-    y = y - makeDropdown(wrapper, "Frame style", y, {
-            { value = "none",    text = "None (plain)" },
-            { value = "forever", text = "EUI Forever" },
-        },
-        function() return X and X.Get().frame or "forever" end,
-        function(v) if X then X.SetValue("frame", v) end end)
-    y = y - makeDropdown(wrapper, "Profession fill", y, (X and X.ProfessionOptions()) or { { value = "none", text = "None" } },
-        function() return X and X.Get().profession or "none" end,
-        function(v) if X then X.SetValue("profession", v) end end)
-    y = y - makeToggle(wrapper, "Stretch fill to bar", y,
-        function() return X and X.Get().stretch end,
-        function(v) if X then X.SetValue("stretch", v) end end,
-        "Stretch one copy of the profession art across the whole bar (default).\nOff tiles it at the art's native proportions.")
-    y = y - 4
-    y = y - makeSlider(wrapper, "Horizontal (X)", y, -800, 800, 1,
-        function() return X and X.Get().x or 0 end,
-        function(v) if X then X.SetValue("x", v) end end,
-        function(v) return tostring(math.floor(v + 0.5)) end)
-    y = y - makeSlider(wrapper, "Vertical (Y)", y, -800, 800, 1,
-        function() return X and X.Get().y or 0 end,
-        function(v) if X then X.SetValue("y", v) end end,
-        function(v) return tostring(math.floor(v + 0.5)) end)
-    y = y - makeSlider(wrapper, "Width", y, 120, 800, 1,
-        function() return X and X.Get().width or 360 end,
-        function(v) if X then X.SetValue("width", v) end end,
-        function(v) return tostring(math.floor(v + 0.5)) end)
-    y = y - makeSlider(wrapper, "Height", y, 6, 40, 1,
-        function() return X and X.Get().height or 14 end,
-        function(v) if X then X.SetValue("height", v) end end,
-        function(v) return tostring(math.floor(v + 0.5)) end)
-    y = y - makeToggle(wrapper, "Show text", y,
-        function() return X and X.Get().showText end,
-        function(v) if X then X.SetValue("showText", v) end end,
-        "Level and XP percentage on the bar.")
-    y = y - makeToggle(wrapper, "Show dividers (10%)", y,
-        function() return X and X.Get().showTicks end,
-        function(v) if X then X.SetValue("showTicks", v) end end,
-        "Solid divider lines every 10%.")
-    y = y - makeToggle(wrapper, "5% lines", y,
-        function() return X and X.Get().show5 end,
-        function(v) if X then X.SetValue("show5", v) end end,
-        "Add lighter, shorter divider lines every 5%.")
-    y = y - makeToggle(wrapper, "Divider text", y,
-        function() return X and X.Get().dividerText end,
-        function(v) if X then X.SetValue("dividerText", v) end end,
-        "Show percentage labels (10, 20, ...) above the 10% dividers.")
-    y = y - 6
-    y = y - makeButton(wrapper, "Match Blizzard bar position", y,
-        function() if X then X.MatchBlizzPosition() end end, 240)
-    return -y + UI.PAD
+    local full, two, gap, height = Columns(wrapper)
+    local function tog(text, key, tip, onset)
+        return function(p, y) return makeToggle(p, text, y,
+            function() return X and X.Get()[key] end,
+            function(v) if X then (onset or function(vv) X.SetValue(key, vv) end)(v) end end, tip) end
+    end
+    local function sld(text, key, lo, hi)
+        return function(p, y) return makeSlider(p, text, y, lo, hi, 1,
+            function() return X and X.Get()[key] or 0 end,
+            function(v) if X then X.SetValue(key, v) end end,
+            function(v) return tostring(math.floor(v + 0.5)) end) end
+    end
+
+    full(function(w, y) return makeSection(w, "Experience Bar", y) end)
+    two(
+        tog("Show XP bar", "enabled", "Show a standalone XP bar.", function(v) X.SetEnabled(v) end),
+        tog("Replace Blizzard's", "replace", "Hide Blizzard's status-tracking XP bar.\nOff + /reload restores it.", function(v) X.SetReplace(v) end))
+    two(
+        function(p, y) return makeDropdown(p, "Frame style", y,
+            { { value = "none", text = "None (plain)" }, { value = "forever", text = "EUI Forever" } },
+            function() return X and X.Get().frame or "forever" end,
+            function(v) if X then X.SetValue("frame", v) end end) end,
+        function(p, y) return makeDropdown(p, "Profession fill", y, (X and X.ProfessionOptions()) or { { value = "none", text = "None" } },
+            function() return X and X.Get().profession or "none" end,
+            function(v) if X then X.SetValue("profession", v) end end) end)
+    two(
+        tog("Stretch fill", "stretch", "Stretch one copy of the art across the bar (default); off tiles it."),
+        tog("Show text", "showText", "Level / XP% on the bar."))
+
+    full(function(w, y) return makeSection(w, "Position & Size", y) end)
+    two(sld("Position X", "x", -800, 800), sld("Position Y", "y", -800, 800))
+    two(sld("Width", "width", 120, 1920), sld("Height", "height", 6, 40))
+    full(function(w, y) return makeButton(w, "Match Blizzard bar position", y,
+        function() if X then X.MatchBlizzPosition() end end, 240) end)
+
+    full(function(w, y) return makeSection(w, "Dividers", y) end)
+    two(
+        tog("Show dividers (10%)", "showTicks", "Solid lines every 10%."),
+        tog("5% lines", "show5", "Lighter lines every 5%."))
+    two(
+        tog("Divider text", "dividerText", "Percentage labels above the 10% dividers."),
+        function(p, y) return makeColorSwatch(p, "Text color", y,
+            function() return X and X.Get().dividerTextColor end,
+            function(r, g, b) if X then X.SetValue("dividerTextColor", { r, g, b }) end end) end)
+    two(sld("Text offset Y", "dividerTextY", -20, 20), nil)
+
+    return height()
 end
 
 local SECTIONS = {
