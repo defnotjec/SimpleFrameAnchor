@@ -12,7 +12,8 @@
 -- frame (login, zone-in, layout changes, exiting Edit Mode). Each frame's original
 -- anchor is captured once so turning management off hands it back to Edit Mode.
 
-local ADDON = ...
+local ADDON, ns = ...
+ns = ns or {}
 
 -- ============================================================================
 --  Config model
@@ -437,10 +438,30 @@ local function buildGeneral(wrapper)
     return -y + UI.PAD
 end
 
+local function buildCastbars(wrapper)
+    local CB = ns.CB
+    local y = -UI.PAD
+    y = y - makeSection(wrapper, "Legion Classic Style", y)
+    y = y - makeInfo(wrapper,
+        "Reskin the default cast bars (Player, Pet, Target, Focus, Boss) with the old Legion " ..
+        "Classic look, using in-game textures. Nameplate cast bars are not affected yet.", y)
+    y = y - makeToggle(wrapper, "Replace all cast bars with Legion style", y,
+        function() return CB and CB.IsEnabled() end,
+        function(v) if CB then CB.SetEnabled(v) end end,
+        "Applies the Legion skin immediately when turned on.\nTurn off then /reload to restore Blizzard's default art.")
+    y = y - 10
+    y = y - makeSection(wrapper, "Notes", y)
+    y = y - makeInfo(wrapper,
+        "Show/move for the Target, Target-of-Target and Focus cast bars is coming next. " ..
+        "Turning the style off needs a /reload to fully restore the default artwork.", y)
+    return -y + UI.PAD
+end
+
 local SECTIONS = {
     { key = "PlayerFrame",             title = "Player Frame",     desc = "Where the player unit frame sits.",  build = function(w) return buildSubjectPane("PlayerFrame", w) end },
     { key = "TargetFrame",             title = "Target Frame",     desc = "Where the target unit frame sits.",  build = function(w) return buildSubjectPane("TargetFrame", w) end },
     { key = "EssentialCooldownViewer", title = "Cooldown Manager", desc = "Move the Cooldown Manager itself. Off by default -- Edit Mode owns it.", build = function(w) return buildSubjectPane("EssentialCooldownViewer", w) end },
+    { key = "castbars",                title = "Cast Bars",        desc = "Legion Classic cast bar style for the default cast bars.", build = buildCastbars },
     { key = "general",                 title = "General",          desc = "Presets, reset and notes.",          build = buildGeneral },
 }
 local sectionByKey = {}
@@ -560,6 +581,75 @@ local function openOptions()
 end
 
 -- ============================================================================
+--  [DEV PROBE] castbar frame discovery -> SimpleFrameAnchorDB._castbarProbe
+--  Dumps which cast bar frames exist on this client and their sub-regions, so the
+--  Legion reskin can target the right field names. Run `/sfa probe`, /reload, read it.
+-- ============================================================================
+local function probeCastbars()
+    ensureDB()
+    local KEYS = { "Border", "BorderShield", "Flash", "Icon", "Spark", "Text",
+                   "Background", "Spellbar", "unit", "barType", "Shield", "TextBorder" }
+    local PATHS = {
+        "CastingBarFrame", "PlayerCastingBarFrame", "PetCastingBarFrame",
+        "TargetFrame.spellbar", "FocusFrame.spellbar",
+        "Boss1TargetFrame.spellbar",
+        "TargetFrameToT", "FocusFrameToT",
+    }
+    local function resolvePath(path)
+        local obj
+        for part in path:gmatch("[^.]+") do
+            if obj == nil then obj = _G[part]
+            elseif type(obj) == "table" then obj = obj[part]
+            else return nil end
+        end
+        return obj
+    end
+    local out = {}
+    out[#out+1] = "CastingBarFrame_OnEvent fn = " .. type(_G.CastingBarFrame_OnEvent)
+    out[#out+1] = "WOW_PROJECT_ID = " .. tostring(WOW_PROJECT_ID) .. " / MAINLINE=" .. tostring(WOW_PROJECT_MAINLINE)
+    for _, path in ipairs(PATHS) do
+        local f = resolvePath(path)
+        if not f then
+            out[#out+1] = path .. " = NIL"
+        else
+            local line = path .. " | type=" .. (f.GetObjectType and f:GetObjectType() or "?")
+            if f.unit ~= nil then line = line .. " unit=" .. tostring(f.unit) end
+            local present = {}
+            for _, k in ipairs(KEYS) do
+                local v = f[k]
+                if v ~= nil then
+                    present[#present+1] = k .. ":" .. (type(v) == "table" and (v.GetObjectType and v:GetObjectType() or "table") or type(v))
+                end
+            end
+            line = line .. " | keys={" .. table.concat(present, ", ") .. "}"
+            out[#out+1] = line
+            -- region inventory (textures/fontstrings) with draw layers
+            if f.GetRegions then
+                for i = 1, select("#", f:GetRegions()) do
+                    local r = select(i, f:GetRegions())
+                    if r and r.GetObjectType then
+                        local layer, sub = (r.GetDrawLayer and r:GetDrawLayer())
+                        out[#out+1] = "    region[" .. i .. "] " .. r:GetObjectType()
+                            .. " layer=" .. tostring(layer) .. ":" .. tostring(sub)
+                            .. " tex=" .. tostring(r.GetTexture and r:GetTexture())
+                    end
+                end
+            end
+        end
+    end
+    -- nameplate castbar probe (if a plate is up)
+    if C_NamePlate and C_NamePlate.GetNamePlateForUnit then
+        local plate = C_NamePlate.GetNamePlateForUnit("target")
+        local uf = plate and plate.UnitFrame
+        local cb = uf and (uf.castBar or uf.CastBar)
+        out[#out+1] = "nameplate(target).castBar = " .. tostring(cb)
+            .. (cb and (" keys Border=" .. tostring(cb.Border) .. " Spark=" .. tostring(cb.Spark)) or "")
+    end
+    SimpleFrameAnchorDB._castbarProbe = out
+    print("|cff66ccffSimpleFrameAnchor|r: castbar probe written (" .. #out .. " lines). Target a caster mid-cast for best results, then /reload.")
+end
+
+-- ============================================================================
 --  Events + slash
 -- ============================================================================
 local ev = CreateFrame("Frame")
@@ -592,7 +682,9 @@ SLASH_SIMPLEFRAMEANCHOR1 = "/simpleframeanchor"
 SLASH_SIMPLEFRAMEANCHOR2 = "/sfa"
 SlashCmdList.SIMPLEFRAMEANCHOR = function(msg)
     msg = (msg or ""):lower():gsub("%s+", "")
-    if msg == "reset" then
+    if msg == "probe" then
+        probeCastbars()
+    elseif msg == "reset" then
         resetAll()
         print("|cff66ccffSimpleFrameAnchor|r: reset all frames to defaults.")
     elseif msg == "preset" then
