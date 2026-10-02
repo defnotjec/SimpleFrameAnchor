@@ -156,7 +156,7 @@ end
 -- ============================================================================
 --  UI theme (matched to the DropChanceTooltip options panel)
 -- ============================================================================
-local UI = { W = 580, H = 452, SIDEBAR_W = 158, PAD = 18, ROW_H = 30 }
+local UI = { W = 580, H = 452, SIDEBAR_W = 158, PAD = 16, ROW_H = 26, LABEL_W = 120 }
 local ACCENT = { 0.40, 0.80, 1.00 }
 local FONT = "Fonts\\FRIZQT__.TTF"
 
@@ -244,20 +244,30 @@ local function makeToggle(parent, text, y, get, set, tooltip)
 end
 
 local function makeSlider(parent, text, y, minV, maxV, step, get, set, fmt)
-    local H = 40
+    -- Compact single row: label (left) | track (middle) | value box (right).
+    local H = UI.ROW_H
+    local rowIndex = parent._rows or 0
+    parent._rows = rowIndex + 1
     local c = CreateFrame("Frame", nil, parent)
     c:SetPoint("TOPLEFT", parent, "TOPLEFT", UI.PAD, y); c:SetPoint("RIGHT", parent, "RIGHT", -UI.PAD, 0); c:SetHeight(H)
-    local label = MakeFont(c, 13, 0.88, 0.88, 0.9); label:SetPoint("TOPLEFT", 8, -2); label:SetText(text)
-    local valfs = MakeFont(c, 13, ACCENT[1], ACCENT[2], ACCENT[3]); valfs:SetPoint("TOPRIGHT", -8, -2)
+    local bg = SolidTex(c, "BACKGROUND", 1, 1, 1, (rowIndex % 2 == 0) and 0.03 or 0.06); bg:SetAllPoints(c)
+    local label = MakeFont(c, 13, 0.88, 0.88, 0.9); label:SetPoint("LEFT", 8, 0); label:SetText(text)
+
+    -- value box on the right
+    local vbox = CreateFrame("Frame", nil, c); vbox:SetSize(48, 18); vbox:SetPoint("RIGHT", -8, 0)
+    SolidTex(vbox, "BACKGROUND", 0.10, 0.10, 0.12, 1):SetAllPoints(vbox)
+    MakeBorder(vbox, 0, 0, 0, 0.8)
+    local valfs = MakeFont(vbox, 12, ACCENT[1], ACCENT[2], ACCENT[3]); valfs:SetPoint("CENTER")
 
     local track = CreateFrame("Frame", nil, c)
-    track:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -8); track:SetPoint("RIGHT", c, "RIGHT", -10, 0); track:SetHeight(5)
+    track:SetPoint("LEFT", c, "LEFT", UI.LABEL_W, 0); track:SetPoint("RIGHT", vbox, "LEFT", -10, 0); track:SetHeight(6)
     track:EnableMouse(true)
     SolidTex(track, "ARTWORK", 0.24, 0.24, 0.28, 1):SetAllPoints(track)
     local fill = SolidTex(track, "OVERLAY", ACCENT[1], ACCENT[2], ACCENT[3], 0.85)
     fill:SetPoint("TOPLEFT"); fill:SetPoint("BOTTOMLEFT"); fill:SetWidth(1)
-    local thumb = CreateFrame("Button", nil, track); thumb:SetSize(12, 12)
-    SolidTex(thumb, "OVERLAY", 0.92, 0.92, 0.92, 1):SetAllPoints(thumb)
+    local thumb = CreateFrame("Button", nil, track); thumb:SetSize(14, 14)
+    SolidTex(thumb, "OVERLAY", 0.95, 0.95, 0.95, 1):SetAllPoints(thumb)
+    MakeBorder(thumb, 0, 0, 0, 0.9)
 
     local function clamp(v)
         v = math.max(minV, math.min(maxV, v))
@@ -307,12 +317,15 @@ local openMenu
 local function closeMenu() if openMenu then openMenu:Hide(); openMenu = nil end end
 
 local function makeDropdown(parent, labelText, y, options, get, set)
-    local H = 30
+    local H = UI.ROW_H
+    local rowIndex = parent._rows or 0
+    parent._rows = rowIndex + 1
     local row = CreateFrame("Frame", nil, parent)
     row:SetPoint("TOPLEFT", parent, "TOPLEFT", UI.PAD, y); row:SetPoint("RIGHT", parent, "RIGHT", -UI.PAD, 0); row:SetHeight(H)
+    local bg = SolidTex(row, "BACKGROUND", 1, 1, 1, (rowIndex % 2 == 0) and 0.03 or 0.06); bg:SetAllPoints(row)
     local label = MakeFont(row, 13, 0.88, 0.88, 0.9); label:SetPoint("LEFT", 8, 0); label:SetText(labelText)
 
-    local btn = CreateFrame("Button", nil, row); btn:SetSize(210, 22); btn:SetPoint("RIGHT", -8, 0)
+    local btn = CreateFrame("Button", nil, row); btn:SetSize(210, 20); btn:SetPoint("RIGHT", -8, 0)
     local bg = SolidTex(btn, "ARTWORK", 0.16, 0.16, 0.19, 1); bg:SetAllPoints(btn)
     MakeBorder(btn, 0, 0, 0, 0.8)
     local val = MakeFont(btn, 12, 0.9, 0.9, 0.9); val:SetPoint("LEFT", 8, 0); val:SetPoint("RIGHT", -18, 0); val:SetJustifyH("LEFT")
@@ -497,6 +510,10 @@ local function buildXPBar(wrapper)
         function() return X and X.Get().enabled end,
         function(v) if X then X.SetEnabled(v) end end,
         "Show a standalone XP bar managed by SimpleFrameAnchor.")
+    y = y - makeToggle(wrapper, "Replace Blizzard's XP bar", y,
+        function() return X and X.Get().replace end,
+        function(v) if X then X.SetReplace(v) end end,
+        "Hide Blizzard's default status-tracking XP bar so only this one shows.\nTurn off then /reload to restore it.")
     y = y - 4
     y = y - makeDropdown(wrapper, "Frame style", y, {
             { value = "none",    text = "None (plain)" },
@@ -507,6 +524,10 @@ local function buildXPBar(wrapper)
     y = y - makeDropdown(wrapper, "Profession fill", y, (X and X.ProfessionOptions()) or { { value = "none", text = "None" } },
         function() return X and X.Get().profession or "none" end,
         function(v) if X then X.SetValue("profession", v) end end)
+    y = y - makeToggle(wrapper, "Stretch fill to bar", y,
+        function() return X and X.Get().stretch end,
+        function(v) if X then X.SetValue("stretch", v) end end,
+        "Stretch one copy of the profession art across the whole bar (default).\nOff tiles it at the art's native proportions.")
     y = y - 4
     y = y - makeSlider(wrapper, "Horizontal (X)", y, -800, 800, 1,
         function() return X and X.Get().x or 0 end,
@@ -528,6 +549,21 @@ local function buildXPBar(wrapper)
         function() return X and X.Get().showText end,
         function(v) if X then X.SetValue("showText", v) end end,
         "Level and XP percentage on the bar.")
+    y = y - makeToggle(wrapper, "Show dividers (10%)", y,
+        function() return X and X.Get().showTicks end,
+        function(v) if X then X.SetValue("showTicks", v) end end,
+        "Solid divider lines every 10%.")
+    y = y - makeToggle(wrapper, "5% lines", y,
+        function() return X and X.Get().show5 end,
+        function(v) if X then X.SetValue("show5", v) end end,
+        "Add lighter, shorter divider lines every 5%.")
+    y = y - makeToggle(wrapper, "Divider text", y,
+        function() return X and X.Get().dividerText end,
+        function(v) if X then X.SetValue("dividerText", v) end end,
+        "Show percentage labels (10, 20, ...) above the 10% dividers.")
+    y = y - 6
+    y = y - makeButton(wrapper, "Match Blizzard bar position", y,
+        function() if X then X.MatchBlizzPosition() end end, 240)
     return -y + UI.PAD
 end
 
@@ -782,6 +818,8 @@ local function sfaDump(arg)
             out[#out + 1] = "atlas " .. a .. " = " .. tostring(C_Texture.GetAtlasInfo(a) ~= nil)
         end
         diagDumpFrame(_G.SFA_XPBar, out, "SFA_XPBar")
+        diagDumpFrame(_G.MainStatusTrackingBarContainer, out, "MainStatusTrackingBarContainer")
+        diagDumpFrame(_G.StatusTrackingBarManager, out, "StatusTrackingBarManager")
         diagDumpFrame(_G.PlayerCastingBarFrame, out, "PlayerCastingBarFrame")
         diagDumpFrame(TargetFrame and TargetFrame.spellbar, out, "TargetFrame.spellbar")
         out[#out + 1] = "DB.xpbar = " .. (SimpleFrameAnchorDB.xpbar and "present" or "nil")

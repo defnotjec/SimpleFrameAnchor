@@ -267,10 +267,14 @@ local function hookMove(key)
     local bar = MOVE_BAR[key] and MOVE_BAR[key]()
     if not bar or moveHooked[key] then return end
     moveHooked[key] = true
-    -- Reassert after Blizzard finishes its own layout for this show.
+    -- Reassert on show. Apply SYNCHRONOUSLY first (so it renders in the moved spot with no
+    -- first-frame flicker at the original location), then once more next frame as a backup
+    -- in case Blizzard re-anchors after its own OnShow.
     bar:HookScript("OnShow", function()
-        if mcfg(key).enabled and C_Timer and C_Timer.After then
-            C_Timer.After(0, function() applyMove(key) end)
+        if not mcfg(key).enabled then return end
+        applyMove(key)
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, function() if mcfg(key).enabled then applyMove(key) end end)
         end
     end)
 end

@@ -23,14 +23,20 @@ local COLOR = {
 -- ---- DB ---------------------------------------------------------------------
 local DEFAULTS = {
     enabled    = false,
+    replace    = true,        -- hide Blizzard's status-tracking XP bar and sit where it was
+    posInit    = false,       -- have we adopted Blizzard's position/width once?
     x          = 0,
     y          = -120,
     width      = 360,
     height     = 14,
     frame      = "forever",   -- "forever" | "prof" | "none"  (default per request)
     profession = "Cooking",   -- flipbook profession atlas suffix, or "none" (default per request)
-    showTicks  = true,
-    showText   = true,
+    stretch    = true,        -- stretch one copy of the profession art across the whole bar
+                              -- (default); off tiles it at the art's native proportions
+    showTicks   = true,       -- 10% dividers
+    show5       = false,      -- extra 5% dividers (dashed, lighter)
+    dividerText = true,       -- % labels at each 10% divider
+    showText    = true,       -- level / XP% on the bar
 }
 
 local function xdb()
@@ -282,8 +288,8 @@ local function ApplyFlipFill()
     local cols, rows = FlipGrid(info)
     local frameW, frameH = info.width / cols, info.height / rows
     local bw, bh = fill:GetSize()
-    local n, tw = 1, bw
-    if bh > 0 then
+    local n, tw = 1, bw   -- stretch (default): one copy across the whole bar
+    if (not d.stretch) and bh > 0 then
         tw = math.max(1, math.floor(bh * frameW / frameH + 0.5))
         n = math.max(1, math.ceil(bw / tw))
         if n > FLIP_MAX_TILES then n = FLIP_MAX_TILES; tw = bw / n end
@@ -324,6 +330,64 @@ PlayFlipOnce = function()
     for i = 1, n do tiles[i].once:Play() end
 end
 
+-- Divider ticks: solid lines every 10%, optional dashed lines every 5%, optional %
+-- labels -- all on the overlay (above the fill/flipbook). Width comes from the holder's
+-- SetSize (resolved now), not the anchored fill's GetWidth (still 0 this frame).
+local function DrawTicks()
+    if not (bar and bar.Overlay) then return end
+    local d = xdb()
+    bar._ticks = bar._ticks or {}
+    bar._tickText = bar._tickText or {}
+    for _, t in ipairs(bar._ticks) do t:Hide() end
+    for _, fs in ipairs(bar._tickText) do fs:Hide() end
+
+    local inset = ((d.frame == "forever") and ForeverOK()) and RING_LINE or 0
+    local w = (d.width or bar:GetWidth() or 0) - 2 * inset
+    if w <= 0 then return end
+
+    local ti = 0
+    local function line(pct, dashed)
+        ti = ti + 1
+        local t = bar._ticks[ti]
+        if not t then
+            t = bar.Overlay:CreateTexture(nil, "OVERLAY", nil, 3)
+            t:SetWidth(1)
+            bar._ticks[ti] = t
+        end
+        t:SetColorTexture(0, 0, 0, dashed and 0.35 or 0.6)
+        local x = (pct / 100) * w
+        local pad = dashed and 3 or 0   -- 5% lines are shorter (approx "dashed")
+        t:ClearAllPoints()
+        t:SetPoint("TOP", bar.Fill, "TOPLEFT", x, -pad)
+        t:SetPoint("BOTTOM", bar.Fill, "BOTTOMLEFT", x, pad)
+        t:Show()
+    end
+
+    if d.show5 then
+        for p = 5, 95, 10 do line(p, true) end
+    end
+    if d.showTicks then
+        for p = 10, 90, 10 do line(p, false) end
+    end
+
+    if d.dividerText and d.showTicks then
+        local n = 0
+        for p = 10, 90, 10 do
+            n = n + 1
+            local fs = bar._tickText[n]
+            if not fs then
+                fs = bar.Overlay:CreateFontString(nil, "OVERLAY")
+                fs:SetFontObject("GameFontHighlightSmall")
+                bar._tickText[n] = fs
+            end
+            fs:SetText(p)
+            fs:ClearAllPoints()
+            fs:SetPoint("BOTTOM", bar.Fill, "TOPLEFT", (p / 100) * w, 1)
+            fs:Show()
+        end
+    end
+end
+
 local function Layout()
     if not bar then return end
     local d = xdb()
@@ -332,6 +396,7 @@ local function Layout()
     bar:SetPoint("CENTER", UIParent, "CENTER", d.x, d.y)
     ApplySkin()
     ApplyFlipFill()
+    DrawTicks()
 end
 
 local function EnsureBar()
@@ -360,10 +425,16 @@ local function EnsureBar()
     fill:SetMinMaxValues(0, 1); fill:SetValue(0)
     bar.Fill = fill
 
-    local text = bar:CreateFontString(nil, "OVERLAY")
+    -- Overlay frame ABOVE the fill so the text and dividers aren't covered by the
+    -- fill's own texture / the profession flipbook (child textures draw over parent).
+    local overlay = CreateFrame("Frame", nil, bar)
+    overlay:SetAllPoints(bar)
+    overlay:SetFrameLevel(fill:GetFrameLevel() + 5)
+    bar.Overlay = overlay
+
+    local text = overlay:CreateFontString(nil, "OVERLAY")
     text:SetFontObject("SystemFont_Shadow_Small")
-    text:SetPoint("CENTER", bar, "CENTER", 0, 0)
-    text:SetDrawLayer("OVERLAY", 2)
+    text:SetPoint("CENTER", overlay, "CENTER", 0, 0)
     bar.Text = text
 
     local ev = CreateFrame("Frame")
@@ -397,25 +468,81 @@ end
 -- ---- public API -------------------------------------------------------------
 function XP.Get() return xdb() end
 
+-- ---- replace Blizzard's status-tracking XP bar + adopt its position ---------
+local function BlizzBar()
+    return _G.MainStatusTrackingBarContainer or _G.StatusTrackingBarManager
+end
+
+local function HideBlizz()
+    local b = BlizzBar()
+    if not b then return end
+    if not b._sfaHooked then
+        b._sfaHooked = true
+        b:HookScript("OnShow", function(self)
+            if xdb().enabled and xdb().replace then self:Hide() end
+        end)
+    end
+    b:Hide()
+end
+
+local function ShowBlizz()
+    local b = BlizzBar()
+    if b then b:Show() end   -- best effort; a /reload fully restores Blizzard's management
+end
+
+-- Adopt Blizzard's bar position + width once, so ours lands where the default was.
+local function MatchBlizzPosition()
+    local b = BlizzBar()
+    if not b or not b.GetCenter then return false end
+    local cx, cy = b:GetCenter()
+    local ux, uy = UIParent:GetCenter()
+    if not (cx and ux) then return false end
+    local d = xdb()
+    d.x = math.floor(cx - ux + 0.5)
+    d.y = math.floor(cy - uy + 0.5)
+    local w = b:GetWidth()
+    if w and w > 60 then d.width = math.floor(w + 0.5) end
+    return true
+end
+XP.MatchBlizzPosition = function() if MatchBlizzPosition() then Layout() end end
+
 function XP.ApplyAll()
-    if not xdb().enabled then
+    local d = xdb()
+    if not d.enabled then
         if bar then bar:Hide() end
         return
     end
+    -- Adopt the default bar's spot the first time, BEFORE hiding it.
+    if not d.posInit then
+        if MatchBlizzPosition() then d.posInit = true end
+    end
+    if d.replace then HideBlizz() end
     EnsureBar()
     Layout()
     UpdateXP()
 end
 
 function XP.SetEnabled(on)
-    xdb().enabled = on and true or false
+    local d = xdb()
+    d.enabled = on and true or false
     if on then
+        if not d.posInit and MatchBlizzPosition() then d.posInit = true end
+        if d.replace then HideBlizz() end
         EnsureBar(); Layout(); UpdateXP()
-        print("|cff66ccffSimpleFrameAnchor|r: Experience bar ON.")
+        print("|cff66ccffSimpleFrameAnchor|r: Experience bar ON" .. (d.replace and " (Blizzard's hidden)." or "."))
     else
         if bar then bar:Hide() end
-        print("|cff66ccffSimpleFrameAnchor|r: Experience bar OFF.")
+        ShowBlizz()
+        print("|cff66ccffSimpleFrameAnchor|r: Experience bar OFF -- |cffffff00/reload|r if Blizzard's bar does not return.")
     end
+end
+
+function XP.SetReplace(on)
+    xdb().replace = on and true or false
+    if xdb().enabled then
+        if on then HideBlizz() else ShowBlizz() end
+    end
+    if not on then print("|cff66ccffSimpleFrameAnchor|r: /reload if Blizzard's XP bar does not return.") end
 end
 
 function XP.SetValue(key, v)
