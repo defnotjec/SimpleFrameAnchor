@@ -498,6 +498,13 @@ local function buildXPBar(wrapper)
         function(v) if X then X.SetEnabled(v) end end,
         "Show a standalone XP bar managed by SimpleFrameAnchor.")
     y = y - 4
+    y = y - makeDropdown(wrapper, "Frame style", y, {
+            { value = "none",    text = "None (plain)" },
+            { value = "forever", text = "EUI Forever" },
+        },
+        function() return X and X.Get().frame or "forever" end,
+        function(v) if X then X.SetValue("frame", v) end end)
+    y = y - 4
     y = y - makeSlider(wrapper, "Horizontal (X)", y, -800, 800, 1,
         function() return X and X.Get().x or 0 end,
         function(v) if X then X.SetValue("x", v) end end,
