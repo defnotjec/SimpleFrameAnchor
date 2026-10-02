@@ -200,10 +200,20 @@ local FLIP_SLOW_IN = {
     Skillbar_Fill_Flipbook_Leatherworking = true,
 }
 
-local function FlipStatic(tex, info, rows)
+-- The client keeps the flipbook FRAME size constant (856 x 34) and varies the atlas's
+-- native size per profession, so cols AND rows must be derived per atlas -- a fixed 2-col
+-- grid samples the wrong cells on other sizes (texture appears to rotate). (Per XPFlipTest.)
+local FLIP_FRAME_W, FLIP_FRAME_H = 856, 34
+local function FlipGrid(info)
+    local cols = math.max(1, math.floor(info.width / FLIP_FRAME_W + 0.5))
+    local rows = math.max(1, math.floor(info.height / FLIP_FRAME_H + 0.5))
+    return cols, rows
+end
+
+local function FlipStatic(tex, info, cols, rows)
     tex:SetTexture(info.file or info.filename)
     local l, r, t, b = info.leftTexCoord, info.rightTexCoord, info.topTexCoord, info.bottomTexCoord
-    tex:SetTexCoord(l, l + (r - l) / 2, t, t + (b - t) / rows)
+    tex:SetTexCoord(l, l + (r - l) / cols, t, t + (b - t) / rows)   -- frame 0 (top-left cell)
 end
 
 local function NewFlipTile(parent, mask)
@@ -269,11 +279,12 @@ local function ApplyFlipFill()
     mask:SetPoint("RIGHT", tex, "RIGHT")   -- rides the fill edge on every value change
     mask:SetSize(bar:GetSize())
 
-    local rows = math.max(1, math.floor(info.height / 34 + 0.5))
+    local cols, rows = FlipGrid(info)
+    local frameW, frameH = info.width / cols, info.height / rows
     local bw, bh = fill:GetSize()
     local n, tw = 1, bw
     if bh > 0 then
-        tw = math.max(1, math.floor(bh * (info.width / 2) / (info.height / rows) + 0.5))
+        tw = math.max(1, math.floor(bh * frameW / frameH + 0.5))
         n = math.max(1, math.ceil(bw / tw))
         if n > FLIP_MAX_TILES then n = FLIP_MAX_TILES; tw = bw / n end
     end
@@ -285,11 +296,11 @@ local function ApplyFlipFill()
         local t = tiles[i]
         if resync then t.once:Stop(); t.loop:Stop() end
         if t.atlas ~= atlas then
-            t.once._fb:SetFlipBookRows(rows); t.once._fb:SetFlipBookFrames(rows * 2)
-            t.loop._fb:SetFlipBookRows(rows); t.loop._fb:SetFlipBookFrames(rows * 2)
+            t.once._fb:SetFlipBookColumns(cols); t.once._fb:SetFlipBookRows(rows); t.once._fb:SetFlipBookFrames(cols * rows)
+            t.loop._fb:SetFlipBookColumns(cols); t.loop._fb:SetFlipBookRows(rows); t.loop._fb:SetFlipBookFrames(cols * rows)
             t.once._fadeIn:SetDuration(fadeIn)
             t.flip:SetAtlas(atlas)
-            FlipStatic(t.idle, info, rows)
+            FlipStatic(t.idle, info, cols, rows)
             t.atlas = atlas
         end
         local x = (i - 1) * tw
