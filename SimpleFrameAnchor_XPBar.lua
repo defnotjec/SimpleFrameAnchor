@@ -36,6 +36,7 @@ local DEFAULTS = {
     showTicks   = true,       -- 10% dividers
     show5       = false,      -- extra 5% dividers (dashed, lighter)
     dividerText = true,       -- % labels at each 10% divider
+    dividerTextX     = 0,     -- label horizontal offset
     dividerTextY     = 2,     -- label vertical offset above the bar
     dividerTextColor = { 1, 1, 1 },
     showText    = true,       -- level / XP% on the bar
@@ -383,11 +384,11 @@ local function DrawTicks()
                 fs:SetFontObject("GameFontHighlightSmall")
                 bar._tickText[n] = fs
             end
-            fs:SetText(p)
+            fs:SetText(p .. "%")
             local tc = d.dividerTextColor or { 1, 1, 1 }
             fs:SetTextColor(tc[1], tc[2], tc[3])
             fs:ClearAllPoints()
-            fs:SetPoint("BOTTOM", bar.Fill, "TOPLEFT", (p / 100) * w, d.dividerTextY or 2)
+            fs:SetPoint("BOTTOM", bar.Fill, "TOPLEFT", (p / 100) * w + (d.dividerTextX or 0), d.dividerTextY or 2)
             fs:Show()
         end
     end

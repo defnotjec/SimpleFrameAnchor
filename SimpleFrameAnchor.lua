@@ -335,8 +335,10 @@ local function makeDropdown(parent, labelText, y, options, get, set)
     local bg = SolidTex(row, "BACKGROUND", 1, 1, 1, (rowIndex % 2 == 0) and 0.03 or 0.06); bg:SetAllPoints(row)
     local label = MakeFont(row, 13, 0.88, 0.88, 0.9); label:SetPoint("LEFT", 8, 0); label:SetText(labelText)
 
-    local btn = CreateFrame("Button", nil, row); btn:SetHeight(20)
-    btn:SetPoint("LEFT", row, "LEFT", UI.LABEL_W, 0); btn:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+    -- Width capped at 210 but shrinks to fit a narrow (two-column) parent.
+    local avail = (parent:GetWidth() or 300) - 2 * UI.PAD - UI.LABEL_W - 8
+    local bw = math.max(80, math.min(210, avail))
+    local btn = CreateFrame("Button", nil, row); btn:SetSize(bw, 20); btn:SetPoint("RIGHT", row, "RIGHT", -8, 0)
     local bg = SolidTex(btn, "ARTWORK", 0.16, 0.16, 0.19, 1); bg:SetAllPoints(btn)
     MakeBorder(btn, 0, 0, 0, 0.8)
     local val = MakeFont(btn, 12, 0.9, 0.9, 0.9); val:SetPoint("LEFT", 8, 0); val:SetPoint("RIGHT", -18, 0); val:SetJustifyH("LEFT")
@@ -615,7 +617,7 @@ local function buildXPBar(wrapper)
         function(p, y) return makeColorSwatch(p, "Text color", y,
             function() return X and X.Get().dividerTextColor end,
             function(r, g, b) if X then X.SetValue("dividerTextColor", { r, g, b }) end end) end)
-    two(sld("Text offset Y", "dividerTextY", -20, 20), nil)
+    two(sld("Text offset X", "dividerTextX", -40, 40), sld("Text offset Y", "dividerTextY", -20, 20))
 
     return height()
 end
