@@ -1,8 +1,9 @@
 -- SimpleFrameAnchor - Unit Frames
 --
 -- Light touches on the DEFAULT Blizzard unit frames:
---   * Class-colored health bars (player/pet only; flat texture, no gradient).
+--   * Class-colored health bars (player/pet/target/focus; flat texture, no gradient).
 --   * Self-target name fix (Blizzard omits the name FontString for self-target).
+--   * Optional black unit-frame borders (tint the ornate FrameTexture black).
 --
 -- Target/Focus aura display lives in SimpleFrameAnchor_Auras.lua (own frames via the
 -- native AuraContainer widget) -- the protected Blizzard aura container cannot be
@@ -45,13 +46,12 @@ local function HealthBarOf(frame)
     return c and c.HealthBar
 end
 
--- Units we are allowed to recolor. TARGET/FOCUS (and their ToT) are deliberately
--- EXCLUDED: writing to those protected frames' health bars only happens when they
--- hold a PLAYER (e.g. you target yourself), and that insecure write taints
--- TargetFrame.Update so the name/selection stops refreshing -- the "self-target
--- shows the previous name" bug. On this secret-value client, recoloring the
--- protected target/focus bars is not taint-safe, so we only touch player/pet.
-local SAFE_COLOR_UNITS = { player = true, pet = true }
+-- Units we recolor. Target/Focus ARE included: SetStatusBarColor/SetStatusBarTexture
+-- are display ops (not protected writes) and don't read secret values, so they're
+-- taint-free. The old "self-target loses its name" bug was a SEPARATE Blizzard quirk
+-- (name FontString not set for self) handled by the self-target name fix below --
+-- not caused by recoloring.
+local SAFE_COLOR_UNITS = { player = true, pet = true, target = true, focus = true, targettarget = true, focustarget = true }
 
 local function ColorBar(bar, unit)
     if not ufdb().classColors then return end
@@ -66,8 +66,12 @@ local function ColorBar(bar, unit)
 end
 
 local UNIT_FRAMES = {
-    { f = function() return PlayerFrame end, unit = "player" },
-    { f = function() return PetFrame end,    unit = "pet" },
+    { f = function() return PlayerFrame end,    unit = "player" },
+    { f = function() return TargetFrame end,    unit = "target" },
+    { f = function() return FocusFrame end,     unit = "focus" },
+    { f = function() return TargetFrameToT end, unit = "targettarget" },
+    { f = function() return FocusFrameToT end,  unit = "focustarget" },
+    { f = function() return PetFrame end,       unit = "pet" },
 }
 
 function UF.RefreshColors()
@@ -109,6 +113,39 @@ function UF.SetClassColors(on)
 end
 
 -- ============================================================================
+--  Black unit-frame borders
+--
+--  Tint the ornate FrameTexture (Player/Target/Focus) black -- keeps the frame
+--  shape, just recolors it. SetVertexColor on a texture is not a protected action,
+--  so this is taint-free. Reasserted on login + target/focus change.
+-- ============================================================================
+local function borderTextures()
+    local t = {}
+    local function add(container) if container and container.FrameTexture then t[#t + 1] = container.FrameTexture end end
+    add(PlayerFrame and PlayerFrame.PlayerFrameContainer)
+    add(TargetFrame and TargetFrame.TargetFrameContainer)
+    add(FocusFrame and FocusFrame.TargetFrameContainer)
+    return t
+end
+
+local function ApplyBorders()
+    local v = ufdb().bordersBlack and 0 or 1
+    for _, tex in ipairs(borderTextures()) do
+        pcall(tex.SetVertexColor, tex, v, v, v)
+    end
+end
+
+function UF.IsBordersBlack() return ufdb().bordersBlack and true or false end
+
+function UF.SetBordersBlack(on)
+    ufdb().bordersBlack = on and true or false
+    ApplyBorders()
+    if not on then
+        print("|cff66ccffSimpleFrameAnchor|r: unit-frame borders restored -- |cffffff00/reload|r if any border art looks off.")
+    end
+end
+
+-- ============================================================================
 --  Self-target name fix
 --
 --  On this client Blizzard's TargetFrame does NOT set its name FontString when the
@@ -128,7 +165,8 @@ local nameFix = CreateFrame("Frame")
 nameFix:RegisterEvent("PLAYER_TARGET_CHANGED")
 nameFix:RegisterEvent("PLAYER_ENTERING_WORLD")
 nameFix:SetScript("OnEvent", function()
-    if C_Timer and C_Timer.After then C_Timer.After(0, FixSelfTargetName) else FixSelfTargetName() end
+    local function run() FixSelfTargetName(); ApplyBorders() end
+    if C_Timer and C_Timer.After then C_Timer.After(0, run) else run() end
 end)
 
 -- ============================================================================
@@ -140,6 +178,7 @@ ev:RegisterEvent("PLAYER_ENTERING_WORLD")   -- frames fully ready; retry if logi
 ev:SetScript("OnEvent", function()
     local function run()
         if ufdb().classColors then HookHealth(); UF.RefreshColors() end
+        ApplyBorders()
     end
     if C_Timer and C_Timer.After then C_Timer.After(0.3, run) else run() end
 end)

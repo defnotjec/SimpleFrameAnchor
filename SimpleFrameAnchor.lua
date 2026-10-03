@@ -485,7 +485,11 @@ local function buildGeneral(wrapper)
     y = y - makeToggle(wrapper, "Enable class colors", y,
         function() return ns.UF and ns.UF.IsClassColors() end,
         function(v) if ns.UF then ns.UF.SetClassColors(v) end end,
-        "Color the default unit-frame health bars by class (players only).\nTurn off then /reload to restore default colors.")
+        "Color the default unit-frame health bars by class (Player, Target, Focus, Pet).\nTurn off then /reload to restore default colors.")
+    y = y - makeToggle(wrapper, "Unit frame borders black", y,
+        function() return ns.UF and ns.UF.IsBordersBlack() end,
+        function(v) if ns.UF then ns.UF.SetBordersBlack(v) end end,
+        "Tint the Player/Target/Focus frame borders black.")
     y = y - 8
     y = y - makeSection(wrapper, "Preset", y)
     y = y - makeInfo(wrapper,
