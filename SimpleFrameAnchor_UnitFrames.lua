@@ -120,28 +120,59 @@ local function containerOf(frame)
     return nil
 end
 
--- Shift the aura container after Blizzard anchors it. AdjustPointsOffset (not SetPoint)
--- avoids triggering a layout cascade. A once-per-frame flag coalesces the several anchor
--- hooks into ONE shift per Blizzard pass (so it's not cumulative) and also prevents any
--- re-entry, so there is no recursion/freeze.
+-- Set the container to base + offset, computing the TRUE base via a sentinel so it is
+-- never cumulative (a plain AdjustPointsOffset drifts when an anchor fires without Blizzard
+-- first resetting to base -- which is exactly what Focus does on a target change). SetPoint
+-- is made idempotent (skipped when already correct) so it cannot re-trigger a layout loop,
+-- and a once-per-frame flag blocks re-entry -- so hooking the broad UpdateAuras is safe and
+-- catches the initial render (no base-then-jump flicker).
 local applied = {}
 local function OffsetAuras(frame, key)
     local cfg = acfg(key)
     if not cfg.enabled or applied[key] then return end
     local container = containerOf(frame)
-    if not container then return end
+    if not (container and container.GetPoint) then return end
+    local p, rel, rp, ox, oy = container:GetPoint(1)
+    if not p then return end
+    ox, oy = ox or 0, oy or 0
+
     applied[key] = true
     if C_Timer and C_Timer.After then C_Timer.After(0, function() applied[key] = false end) end
-    if container.AdjustPointsOffset then
-        container:AdjustPointsOffset(cfg.x, cfg.y)
+
+    -- Detect whether the current point 1 is our last-applied result; if so the base is
+    -- unchanged (and the currently-applied offset is m.off); otherwise Blizzard reset to a
+    -- fresh base with no offset. Then shift ALL points by the delta to reach base + cfg.
+    local m = container._sfaSet
+    local ours = m and m.p == p and m.rel == rel and m.rp == rp
+        and math.abs(ox - (m.baseX + m.offX)) < 0.5 and math.abs(oy - (m.baseY + m.offY)) < 0.5
+    local baseX, baseY, curOffX, curOffY
+    if ours then
+        baseX, baseY, curOffX, curOffY = m.baseX, m.baseY, m.offX, m.offY
     else
-        local p, rel, rp, ox, oy = container:GetPoint(1)
-        if p then container:SetPoint(p, rel, rp, (ox or 0) + cfg.x, (oy or 0) + cfg.y) end
+        baseX, baseY, curOffX, curOffY = ox, oy, 0, 0
     end
+
+    local dx, dy = cfg.x - curOffX, cfg.y - curOffY
+    if math.abs(dx) > 0.5 or math.abs(dy) > 0.5 then
+        if container.AdjustPointsOffset then container:AdjustPointsOffset(dx, dy)
+        else container:SetPoint(p, rel, rp, ox + dx, oy + dy) end
+    end
+    container._sfaSet = { p = p, rel = rel, rp = rp, baseX = baseX, baseY = baseY, offX = cfg.x, offY = cfg.y }
 end
 
--- Hook the anchor paths (NOT UpdateAuras -- too broad) so a re-render re-applies the offset.
-local AURA_ANCHOR_FNS = { "UpdateAuraContainerAnchors", "AnchorAuraContainer", "ConfigureAuraContainer" }
+local function RestoreAuras(frame)
+    local container = containerOf(frame)
+    local m = container and container._sfaSet
+    if not m then return end
+    local p, _, _, ox, oy = container:GetPoint(1)
+    if p and math.abs((ox or 0) - (m.baseX + m.offX)) < 0.5 and math.abs((oy or 0) - (m.baseY + m.offY)) < 0.5 then
+        if container.AdjustPointsOffset then container:AdjustPointsOffset(-m.offX, -m.offY)
+        else container:SetPoint(m.p, m.rel, m.rp, m.baseX, m.baseY) end
+    end
+    container._sfaSet = nil
+end
+
+local AURA_ANCHOR_FNS = { "UpdateAuraContainerAnchors", "AnchorAuraContainer", "ConfigureAuraContainer", "UpdateAuras" }
 local auraHooked = {}
 local function HookAuras(key)
     local frame = AURA_FRAME[key] and AURA_FRAME[key]()
@@ -158,14 +189,9 @@ local function HookAuras(key)
     return any
 end
 
--- Make Blizzard re-anchor to base now; our hook re-applies the current offset (or, when
--- disabled, leaves it at base). Clears the once-per-frame flag so the new value takes.
-local function ReAnchor(key)
-    local frame = AURA_FRAME[key] and AURA_FRAME[key]()
-    if not frame then return end
+local function ApplyNow(key)
     applied[key] = false
-    if frame.UpdateAuraContainerAnchors then pcall(frame.UpdateAuraContainerAnchors, frame)
-    elseif frame.AnchorAuraContainer then pcall(frame.AnchorAuraContainer, frame) end
+    OffsetAuras(AURA_FRAME[key] and AURA_FRAME[key](), key)
 end
 
 function UF.GetAura(key) return acfg(key) end
@@ -173,19 +199,19 @@ function UF.GetAura(key) return acfg(key) end
 function UF.SetAuraEnabled(key, on)
     acfg(key).enabled = on and true or false
     HookAuras(key)
-    ReAnchor(key)
+    if on then ApplyNow(key) else RestoreAuras(AURA_FRAME[key] and AURA_FRAME[key]()) end
 end
 
 function UF.SetAuraPos(key, axis, v)
     acfg(key)[axis] = v
-    ReAnchor(key)
+    ApplyNow(key)
 end
 
 -- Install the hook (if the frame/method is ready yet) AND force-apply the saved offset,
 -- so it persists across reloads without needing a live aura change.
 local function TryAura(key)
     HookAuras(key)
-    if acfg(key).enabled then ReAnchor(key) end
+    if acfg(key).enabled then ApplyNow(key) end
 end
 
 -- ============================================================================
