@@ -348,7 +348,7 @@ local function buildTest(key)
     txt:SetText(TEST_LABEL[key] or "Cast Bar")
 
     local hint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    hint:SetPoint("BOTTOM", f, "TOP", 0, 24); hint:SetText("|cffaaaaaadrag to move|r")
+    hint:SetPoint("BOTTOM", f, "TOP", 0, 8); hint:SetText("|cffaaaaaadrag to move|r")
 
     local function layoutFill()
         local w = f:GetWidth() or 150

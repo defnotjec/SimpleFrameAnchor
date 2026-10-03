@@ -29,12 +29,18 @@ local function ClassColor(unit)
     return (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class]
 end
 
--- Color a standard unit-frame health bar (bar.unit set by Blizzard).
+-- Color a standard unit-frame health bar (bar.unit set by Blizzard). The modern bar fill
+-- is a sheened atlas, so tinting it leaves a gradient -- swap to a flat texture so the
+-- class color reads clean.
+local FLAT_BAR = "Interface\\TargetingFrame\\UI-StatusBar"
 local function ColorBar(bar)
     if not ufdb().classColors then return end
     if not bar or not bar.unit then return end
     local c = ClassColor(bar.unit)
-    if c then bar:SetStatusBarColor(c.r, c.g, c.b) end
+    if c then
+        if bar.SetStatusBarTexture then bar:SetStatusBarTexture(FLAT_BAR) end
+        bar:SetStatusBarColor(c.r, c.g, c.b)
+    end
 end
 
 local function HookHealth()
