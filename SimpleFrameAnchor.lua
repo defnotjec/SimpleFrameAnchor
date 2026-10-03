@@ -638,12 +638,41 @@ local function buildXPBar(wrapper)
     return height()
 end
 
+local function buildAuras(wrapper)
+    local U = ns.UF
+    local full, two, gap, height = Columns(wrapper)
+    full(function(w, y) return makeInfo(w,
+        "Offset the buffs & debuffs on the Target and Focus frames only. " ..
+        "Player auras are left to Edit Mode (moving them would conflict).", y) end)
+    local function block(key, label)
+        full(function(w, y) return makeSection(w, label .. " Auras", y) end)
+        two(
+            function(p, y) return makeToggle(p, "Offset " .. label .. " auras", y,
+                function() return U and U.GetAura(key).enabled end,
+                function(v) if U then U.SetAuraEnabled(key, v) end end,
+                "Shift this unit's buff & debuff block by an X/Y offset.") end, nil)
+        two(
+            function(p, y) return makeSlider(p, "X", y, -400, 400, 1,
+                function() return U and U.GetAura(key).x or 0 end,
+                function(v) if U then U.SetAuraPos(key, "x", v) end end,
+                function(v) return tostring(math.floor(v + 0.5)) end) end,
+            function(p, y) return makeSlider(p, "Y", y, -400, 400, 1,
+                function() return U and U.GetAura(key).y or 0 end,
+                function(v) if U then U.SetAuraPos(key, "y", v) end end,
+                function(v) return tostring(math.floor(v + 0.5)) end) end)
+    end
+    block("target", "Target")
+    block("focus", "Focus")
+    return height()
+end
+
 local SECTIONS = {
     { key = "PlayerFrame",             title = "Player Frame",     desc = "Where the player unit frame sits.",  build = function(w) return buildSubjectPane("PlayerFrame", w) end },
     { key = "TargetFrame",             title = "Target Frame",     desc = "Where the target unit frame sits.",  build = function(w) return buildSubjectPane("TargetFrame", w) end },
     { key = "EssentialCooldownViewer", title = "Cooldown Manager", desc = "Move the Cooldown Manager itself. Off by default -- Edit Mode owns it.", build = function(w) return buildSubjectPane("EssentialCooldownViewer", w) end },
     { key = "castbars",                title = "Cast Bars",        desc = "Legion Classic cast bar style for the default cast bars.", build = buildCastbars },
     { key = "xpbar",                   title = "Experience Bar",   desc = "A standalone XP bar with the EUI Forever / Professions skins.", build = buildXPBar },
+    { key = "auras",                   title = "Auras",            desc = "Offset Target & Focus buffs/debuffs (not player).", build = buildAuras },
     { key = "general",                 title = "General",          desc = "Presets, reset and notes.",          build = buildGeneral },
 }
 local sectionByKey = {}
@@ -897,6 +926,20 @@ local function sfaDump(arg)
         diagDumpFrame(_G.StatusTrackingBarManager, out, "StatusTrackingBarManager")
         diagDumpFrame(_G.PlayerCastingBarFrame, out, "PlayerCastingBarFrame")
         diagDumpFrame(TargetFrame and TargetFrame.spellbar, out, "TargetFrame.spellbar")
+        -- Aura mechanism discovery (modern pooled auras: scan TargetFrame's keys).
+        if TargetFrame then
+            out[#out + 1] = "TargetFrame:UpdateAuras method = " .. type(TargetFrame.UpdateAuras)
+            for _, k in ipairs({ "auraPools", "auras", "buffs", "debuffs", "AuraContainer",
+                "auraContainer", "buffFrames", "debuffFrames", "spellbarAnchor", "maxBuffs", "maxDebuffs" }) do
+                if TargetFrame[k] ~= nil then out[#out + 1] = "TargetFrame." .. k .. " = " .. tostring(TargetFrame[k]) end
+            end
+            local hits = {}
+            for k in pairs(TargetFrame) do
+                local lk = tostring(k):lower()
+                if lk:find("aura") or lk:find("buff") or lk:find("debuff") then hits[#hits + 1] = tostring(k) end
+            end
+            out[#out + 1] = "TargetFrame aura-ish keys: " .. table.concat(hits, ", ")
+        end
         out[#out + 1] = "DB.xpbar = " .. (SimpleFrameAnchorDB.xpbar and "present" or "nil")
         out[#out + 1] = "DB.castbars = " .. (SimpleFrameAnchorDB.castbars and "present" or "nil")
     end
