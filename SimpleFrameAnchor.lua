@@ -940,6 +940,9 @@ local function sfaDump(arg)
             end
             out[#out + 1] = "TargetFrame aura-ish keys: " .. table.concat(hits, ", ")
         end
+        out[#out + 1] = "FocusFrame = " .. tostring(FocusFrame)
+            .. (FocusFrame and (" UpdateAuraContainerAnchors=" .. type(FocusFrame.UpdateAuraContainerAnchors)
+            .. " GetAuraContainer=" .. type(FocusFrame.GetAuraContainer)) or "")
         out[#out + 1] = "DB.xpbar = " .. (SimpleFrameAnchorDB.xpbar and "present" or "nil")
         out[#out + 1] = "DB.castbars = " .. (SimpleFrameAnchorDB.castbars and "present" or "nil")
     end

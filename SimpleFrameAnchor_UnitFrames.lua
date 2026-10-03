@@ -157,15 +157,28 @@ function UF.SetAuraPos(key, axis, v)
     ReAnchor(key)
 end
 
+-- Install the hook (if the frame/method is ready yet) AND force-apply the saved offset,
+-- so it persists across reloads without needing a live aura change.
+local function TryAura(key)
+    HookAuras(key)
+    if acfg(key).enabled then ReAnchor(key) end
+end
+
 -- ============================================================================
 --  Events
 -- ============================================================================
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
-ev:SetScript("OnEvent", function()
-    HookAuras("target"); HookAuras("focus")
-    if ufdb().classColors then
-        HookHealth()
-        if C_Timer and C_Timer.After then C_Timer.After(0.3, UF.RefreshColors) else UF.RefreshColors() end
+ev:RegisterEvent("PLAYER_ENTERING_WORLD")   -- frames fully ready; retry if login was too early
+ev:RegisterEvent("PLAYER_FOCUS_CHANGED")    -- FocusFrame may only init on the first focus
+ev:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_FOCUS_CHANGED" then
+        TryAura("focus")
+        return
     end
+    local function run()
+        TryAura("target"); TryAura("focus")
+        if ufdb().classColors then HookHealth(); UF.RefreshColors() end
+    end
+    if C_Timer and C_Timer.After then C_Timer.After(0.3, run) else run() end
 end)
