@@ -8,4 +8,5 @@
 SimpleFrameAnchor_Castbars.lua
 SimpleFrameAnchor_XPBar.lua
 SimpleFrameAnchor_UnitFrames.lua
+SimpleFrameAnchor_Auras.lua
 SimpleFrameAnchor.lua

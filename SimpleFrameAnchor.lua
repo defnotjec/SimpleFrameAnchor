@@ -638,31 +638,117 @@ local function buildXPBar(wrapper)
     return height()
 end
 
+-- ---- eye / cog icon controls (EUI assets, copied into SFA/media) -------------
+local SFA_ICON = "Interface\\AddOns\\SimpleFrameAnchor\\media\\icons\\"
+local EYE_ON, EYE_OFF, COG_TEX = SFA_ICON .. "eui-visible.png", SFA_ICON .. "eui-invisible.png", SFA_ICON .. "cogs-3.png"
+
+local openFlyout
+local function closeFlyout() if openFlyout then openFlyout:Hide(); openFlyout = nil end end
+
+local function makeIconButton(parent, sz)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(sz, sz)
+    local bg = SolidTex(b, "BACKGROUND", 0.075, 0.113, 0.141, 0.9); bg:SetAllPoints(b)
+    MakeBorder(b, 1, 1, 1, 0.18)
+    local icon = b:CreateTexture(nil, "ARTWORK"); icon:SetSize(sz - 5, sz - 5); icon:SetPoint("CENTER"); icon:SetAlpha(0.75)
+    b.icon = icon
+    b:SetScript("OnEnter", function() icon:SetAlpha(1) end)
+    b:SetScript("OnLeave", function() icon:SetAlpha(0.75) end)
+    return b
+end
+
+-- Global "Duration Text" row: eye toggles text show/hide; cog opens a flyout with
+-- Size / X / Y. Mirrors EUI's mover-cog flyout (anchored Frame, rebuilt per open).
+local function makeTextRow(parent, y)
+    local A = ns.AU
+    local rowIndex = parent._rows or 0; parent._rows = rowIndex + 1
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", UI.PAD, y); row:SetPoint("RIGHT", parent, "RIGHT", -UI.PAD, 0); row:SetHeight(UI.ROW_H)
+    SolidTex(row, "BACKGROUND", 1, 1, 1, (rowIndex % 2 == 0) and 0.03 or 0.06):SetAllPoints(row)
+    local label = MakeFont(row, 13, 0.88, 0.88, 0.9); label:SetPoint("LEFT", 8, 0); label:SetText("Duration Text")
+
+    local SZ = 20
+    local cog = makeIconButton(row, SZ); cog:SetPoint("RIGHT", -8, 0); cog.icon:SetTexture(COG_TEX)
+    local eye = makeIconButton(row, SZ); eye:SetPoint("RIGHT", cog, "LEFT", -4, 0)
+
+    local function textShown() return A and A.GetText().show ~= false end
+    local function applyEye() eye.icon:SetTexture(textShown() and EYE_ON or EYE_OFF) end
+    applyEye()
+    eye:SetScript("OnClick", function()
+        if A then A.SetTextShow(not textShown()); applyEye() end
+    end)
+    eye:SetScript("OnEnter", function() eye.icon:SetAlpha(1)
+        GameTooltip:SetOwner(eye, "ANCHOR_RIGHT"); GameTooltip:SetText("Show / hide duration text", 1, 1, 1); GameTooltip:Show() end)
+    eye:SetScript("OnLeave", function() eye.icon:SetAlpha(0.75); GameTooltip:Hide() end)
+
+    local function buildFlyout()
+        local f = CreateFrame("Frame", nil, UIParent)
+        f:SetFrameStrata("FULLSCREEN_DIALOG"); f:SetToplevel(true); f:SetClampedToScreen(true)
+        local FW = 260
+        f:SetSize(FW, 10)
+        f:SetPoint("TOPRIGHT", cog, "BOTTOMRIGHT", 0, -2)
+        SolidTex(f, "BACKGROUND", 0.075, 0.113, 0.141, 0.97):SetAllPoints(f)
+        MakeBorder(f, 1, 1, 1, 0.22)
+        f._rows = 0
+        local yy = -6
+        yy = yy - makeSlider(f, "Size", yy, 6, 24, 1,
+            function() return A and A.GetText().size or 12 end,
+            function(v) if A then A.SetTextSize(v) end end,
+            function(v) return tostring(math.floor(v + 0.5)) end)
+        yy = yy - makeSlider(f, "Text X", yy, -40, 40, 1,
+            function() return A and A.GetText().x or 0 end,
+            function(v) if A then A.SetTextPos("x", v) end end,
+            function(v) return tostring(math.floor(v + 0.5)) end)
+        yy = yy - makeSlider(f, "Text Y", yy, -40, 40, 1,
+            function() return A and A.GetText().y or 0 end,
+            function(v) if A then A.SetTextPos("y", v) end end,
+            function(v) return tostring(math.floor(v + 0.5)) end)
+        f:SetHeight(-yy + 6)
+        return f
+    end
+    cog:SetScript("OnClick", function()
+        if openFlyout then closeFlyout(); return end
+        openFlyout = buildFlyout()
+        openFlyout:Show()
+    end)
+    cog:SetScript("OnHide", closeFlyout)
+    cog:SetScript("OnEnter", function() cog.icon:SetAlpha(1)
+        GameTooltip:SetOwner(cog, "ANCHOR_RIGHT"); GameTooltip:SetText("Text size & position", 1, 1, 1); GameTooltip:Show() end)
+    cog:SetScript("OnLeave", function() cog.icon:SetAlpha(0.75); GameTooltip:Hide() end)
+
+    if activeRefreshers then activeRefreshers[#activeRefreshers + 1] = applyEye end
+    return UI.ROW_H
+end
+
 local function buildAuras(wrapper)
-    local U = ns.UF
+    local A = ns.AU
     local full, two, gap, height = Columns(wrapper)
     full(function(w, y) return makeInfo(w,
-        "Offset the buffs & debuffs on the Target and Focus frames only. " ..
-        "Player auras are left to Edit Mode (moving them would conflict).", y) end)
-    local function block(key, label)
+        "Our own movable buffs & debuffs for the Target and Focus frames (Blizzard's own " ..
+        "are hidden while this is on). Set independent X/Y for buffs and debuffs. " ..
+        "Player auras are left to Edit Mode.", y) end)
+    local function slider(unit, cat, axis, lbl)
+        return function(p, y) return makeSlider(p, lbl, y, -400, 400, 1,
+            function() return A and A.GetPos(unit, cat)[axis] or 0 end,
+            function(v) if A then A.SetPos(unit, cat, axis, v) end end,
+            function(v) return tostring(math.floor(v + 0.5)) end) end
+    end
+    local function block(unit, label)
         full(function(w, y) return makeSection(w, label .. " Auras", y) end)
         two(
-            function(p, y) return makeToggle(p, "Offset " .. label .. " auras", y,
-                function() return U and U.GetAura(key).enabled end,
-                function(v) if U then U.SetAuraEnabled(key, v) end end,
-                "Shift this unit's buff & debuff block by an X/Y offset.") end, nil)
-        two(
-            function(p, y) return makeSlider(p, "X", y, -400, 400, 1,
-                function() return U and U.GetAura(key).x or 0 end,
-                function(v) if U then U.SetAuraPos(key, "x", v) end end,
-                function(v) return tostring(math.floor(v + 0.5)) end) end,
-            function(p, y) return makeSlider(p, "Y", y, -400, 400, 1,
-                function() return U and U.GetAura(key).y or 0 end,
-                function(v) if U then U.SetAuraPos(key, "y", v) end end,
-                function(v) return tostring(math.floor(v + 0.5)) end) end)
+            function(p, y) return makeToggle(p, "Show " .. label .. " auras", y,
+                function() return A and A.GetEnabled(unit) end,
+                function(v) if A then A.SetEnabled(unit, v) end end,
+                "Replace Blizzard's " .. label .. " auras with our own movable ones.") end, nil)
+        full(function(w, y) return makeSection(w, label .. " \226\128\148 Buffs", y) end)
+        two(slider(unit, "buffs", "x", "X"), slider(unit, "buffs", "y", "Y"))
+        full(function(w, y) return makeSection(w, label .. " \226\128\148 Debuffs", y) end)
+        two(slider(unit, "debuffs", "x", "X"), slider(unit, "debuffs", "y", "Y"))
     end
     block("target", "Target")
     block("focus", "Focus")
+    full(function(w, y) return makeSection(w, "Duration Text", y) end)
+    full(function(w, y) return makeTextRow(w, y) end)
     return height()
 end
 
@@ -672,7 +758,7 @@ local SECTIONS = {
     { key = "EssentialCooldownViewer", title = "Cooldown Manager", desc = "Move the Cooldown Manager itself. Off by default -- Edit Mode owns it.", build = function(w) return buildSubjectPane("EssentialCooldownViewer", w) end },
     { key = "castbars",                title = "Cast Bars",        desc = "Legion Classic cast bar style for the default cast bars.", build = buildCastbars },
     { key = "xpbar",                   title = "Experience Bar",   desc = "A standalone XP bar with the EUI Forever / Professions skins.", build = buildXPBar },
-    { key = "auras",                   title = "Auras",            desc = "Offset Target & Focus buffs/debuffs (not player).", build = buildAuras },
+    { key = "auras",                   title = "Auras",            desc = "Movable Target & Focus buffs/debuffs (our own; not player).", build = buildAuras },
     { key = "general",                 title = "General",          desc = "Presets, reset and notes.",          build = buildGeneral },
 }
 local sectionByKey = {}
