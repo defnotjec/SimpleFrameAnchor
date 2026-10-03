@@ -128,10 +128,42 @@ local function borderTextures()
     return t
 end
 
+-- A crisp 2px black outline drawn around a health bar (our own textures, cached on
+-- the bar). The ornate FrameTexture tint alone doesn't give the bar a clear edge --
+-- especially on top -- so we add this. Creating/anchoring our textures to the bar is
+-- taint-free (not a protected action, no secret read).
+local hbBorders = setmetatable({}, { __mode = "k" })
+local BW = 2
+local function healthBarBorder(bar)
+    if hbBorders[bar] then return hbBorders[bar] end
+    local function edge() local tx = bar:CreateTexture(nil, "OVERLAY", nil, 7); tx:SetColorTexture(0, 0, 0, 1); return tx end
+    local b = { top = edge(), bot = edge(), lft = edge(), rgt = edge() }
+    b.top:SetPoint("BOTTOMLEFT", bar, "TOPLEFT", -BW, 0);    b.top:SetPoint("BOTTOMRIGHT", bar, "TOPRIGHT", BW, 0);    b.top:SetHeight(BW)
+    b.bot:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", -BW, 0);    b.bot:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", BW, 0);    b.bot:SetHeight(BW)
+    b.lft:SetPoint("TOPRIGHT", bar, "TOPLEFT", 0, BW);       b.lft:SetPoint("BOTTOMRIGHT", bar, "BOTTOMLEFT", 0, -BW); b.lft:SetWidth(BW)
+    b.rgt:SetPoint("TOPLEFT", bar, "TOPRIGHT", 0, BW);       b.rgt:SetPoint("BOTTOMLEFT", bar, "BOTTOMRIGHT", 0, -BW); b.rgt:SetWidth(BW)
+    hbBorders[bar] = b
+    return b
+end
+
+local BORDER_FRAMES = {
+    function() return PlayerFrame end,
+    function() return TargetFrame end,
+    function() return FocusFrame end,
+}
+
 local function ApplyBorders()
-    local v = ufdb().bordersBlack and 0 or 1
+    local on = ufdb().bordersBlack and true or false
+    local v = on and 0 or 1
     for _, tex in ipairs(borderTextures()) do
         pcall(tex.SetVertexColor, tex, v, v, v)
+    end
+    for _, getf in ipairs(BORDER_FRAMES) do
+        local bar = HealthBarOf(getf())
+        if bar and bar.CreateTexture then
+            local b = healthBarBorder(bar)
+            for _, e in pairs(b) do e:SetShown(on) end
+        end
     end
 end
 
