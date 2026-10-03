@@ -481,6 +481,12 @@ end
 
 local function buildGeneral(wrapper)
     local y = -UI.PAD
+    y = y - makeSection(wrapper, "Unit Frames", y)
+    y = y - makeToggle(wrapper, "Enable class colors", y,
+        function() return ns.UF and ns.UF.IsClassColors() end,
+        function(v) if ns.UF then ns.UF.SetClassColors(v) end end,
+        "Color the default unit-frame health bars by class (players only).\nTurn off then /reload to restore default colors.")
+    y = y - 8
     y = y - makeSection(wrapper, "Preset", y)
     y = y - makeInfo(wrapper,
         "Flank layout: the Player and Target frames hug the Cooldown Manager's left and right edges and slide outward as it grows.", y)
@@ -862,13 +868,17 @@ local function diagDumpFrame(f, out, tag)
             end
         end
     end
-    for i = 1, (f.GetNumChildren and f:GetNumChildren() or 0) do
-        local c = select(i, f:GetChildren())
-        if c and c.GetObjectType then
-            out[#out + 1] = "   child " .. (c.GetDebugName and c:GetDebugName() or "?")
-                .. " " .. c:GetObjectType() .. " shown=" .. tostring(c.IsShown and c:IsShown())
+    local function kids(fr, depth, pad)
+        for i = 1, (fr.GetNumChildren and fr:GetNumChildren() or 0) do
+            local c = select(i, fr:GetChildren())
+            if c and c.GetObjectType then
+                out[#out + 1] = pad .. "child " .. (c.GetDebugName and c:GetDebugName() or "?")
+                    .. " " .. c:GetObjectType() .. " shown=" .. tostring(c.IsShown and c:IsShown())
+                if depth > 1 then kids(c, depth - 1, pad .. "  ") end
+            end
         end
     end
+    kids(f, 2, "   ")
 end
 
 local function sfaDump(arg)
