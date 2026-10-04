@@ -48,9 +48,15 @@ local function db()
     t.size = t.size or 12
     t.x = t.x or 0
     t.y = t.y or 0
+    -- Global icon size per category (applied as container SetScale off the base ELEMENT).
+    local s = d.size
+    if type(s) ~= "table" then s = {}; d.size = s end
+    if s.buffs == nil then s.buffs = ELEMENT end
+    if s.debuffs == nil then s.debuffs = ELEMENT end
     return d
 end
 local function cfg(unit) return db()[unit] end
+local function sizeOf(cat) return db().size[cat] or ELEMENT end
 
 -- ---- duration text style (global) -------------------------------------------
 -- We draw our OWN duration FontString (SetDurationText) so we fully control size,
@@ -192,6 +198,7 @@ local function apply(unit)
             local c = getContainer(unit, cat)
             if c then
                 anchorContainer(unit, cat)
+                pcall(c.SetScale, c, sizeOf(cat) / ELEMENT)
                 pcall(function() c:SetShown(true); c:UpdateAllAuras() end)
             end
         end
@@ -242,6 +249,18 @@ end
 function AU.SetTextPos(axis, v)
     db().text[axis] = v
     refreshText()
+end
+
+-- ---- icon size (global, per category) ---------------------------------------
+function AU.GetSize(cat) return sizeOf(cat) end
+
+function AU.SetSize(cat, v)
+    db().size[cat] = v
+    local scale = v / ELEMENT
+    for _, unit in ipairs({ "target", "focus" }) do
+        local c = containers[unit] and containers[unit][cat]
+        if c then pcall(c.SetScale, c, scale) end
+    end
 end
 
 -- ---- events -----------------------------------------------------------------

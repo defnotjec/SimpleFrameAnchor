@@ -658,6 +658,33 @@ local function makeReadoutRow(parent, y, label, getEnabled, setEnabled, getAncho
     return UI.ROW_H
 end
 
+-- A plain row: label + cog that opens a flyout populated by `populate(flyout, startY)`
+-- (which returns the ending y). For cog-housed slider groups like aura icon size.
+local function makeCogRow(parent, y, label, populate)
+    local rowIndex = parent._rows or 0; parent._rows = rowIndex + 1
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", UI.PAD, y); row:SetPoint("RIGHT", parent, "RIGHT", -UI.PAD, 0); row:SetHeight(UI.ROW_H)
+    SolidTex(row, "BACKGROUND", 1, 1, 1, (rowIndex % 2 == 0) and 0.03 or 0.06):SetAllPoints(row)
+    local lbl = MakeFont(row, 13, 0.88, 0.88, 0.9); lbl:SetPoint("LEFT", 8, 0); lbl:SetText(label)
+    local cog = makeIconButton(row, 20); cog:SetPoint("RIGHT", -8, 0); cog.icon:SetTexture(COG_TEX)
+    local function buildFlyout()
+        local f = CreateFrame("Frame", nil, UIParent)
+        f:SetFrameStrata("FULLSCREEN_DIALOG"); f:SetToplevel(true); f:SetClampedToScreen(true)
+        f:SetSize(260, 10); f:SetPoint("TOPRIGHT", cog, "BOTTOMRIGHT", 0, -2)
+        SolidTex(f, "BACKGROUND", 0.075, 0.113, 0.141, 0.97):SetAllPoints(f)
+        MakeBorder(f, 1, 1, 1, 0.22)
+        f._rows = 0
+        local yy = populate(f, -6)
+        f:SetHeight(-yy + 6)
+        return f
+    end
+    cog:SetScript("OnClick", function() if openFlyout then closeFlyout(); return end; openFlyout = buildFlyout(); openFlyout:Show() end)
+    cog:SetScript("OnHide", closeFlyout)
+    cog:SetScript("OnEnter", function() cog.icon:SetAlpha(1) end)
+    cog:SetScript("OnLeave", function() cog.icon:SetAlpha(0.75) end)
+    return UI.ROW_H
+end
+
 local function buildXPBar(wrapper)
     local X = ns.XP
     local full, two, gap, height = Columns(wrapper)
@@ -825,6 +852,18 @@ local function buildAuras(wrapper)
     end
     block("target", "Target")
     block("focus", "Focus")
+    full(function(w, y) return makeSection(w, "Icon Size", y) end)
+    full(function(w, y) return makeCogRow(w, y, "Icon size", function(f, yy)
+        yy = yy - makeSlider(f, "Buff Size", yy, 16, 40, 1,
+            function() return A and A.GetSize("buffs") or 24 end,
+            function(v) if A then A.SetSize("buffs", v) end end,
+            function(v) return tostring(math.floor(v + 0.5)) end)
+        yy = yy - makeSlider(f, "Debuff Size", yy, 16, 40, 1,
+            function() return A and A.GetSize("debuffs") or 24 end,
+            function(v) if A then A.SetSize("debuffs", v) end end,
+            function(v) return tostring(math.floor(v + 0.5)) end)
+        return yy
+    end) end)
     full(function(w, y) return makeSection(w, "Duration Text", y) end)
     full(function(w, y) return makeTextRow(w, y) end)
     return height()
