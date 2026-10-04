@@ -581,6 +581,83 @@ local function Columns(wrapper)
     return full, two, gap_, height
 end
 
+-- ---- eye / cog icon controls (EUI assets, copied into SFA/media) -------------
+local SFA_ICON = "Interface\\AddOns\\SimpleFrameAnchor\\media\\icons\\"
+local EYE_ON, EYE_OFF, COG_TEX = SFA_ICON .. "eui-visible.png", SFA_ICON .. "eui-invisible.png", SFA_ICON .. "cogs-3.png"
+
+local openFlyout
+local function closeFlyout() if openFlyout then openFlyout:Hide(); openFlyout = nil end end
+
+local function makeIconButton(parent, sz)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(sz, sz)
+    local bg = SolidTex(b, "BACKGROUND", 0.075, 0.113, 0.141, 0.9); bg:SetAllPoints(b)
+    MakeBorder(b, 1, 1, 1, 0.18)
+    local icon = b:CreateTexture(nil, "ARTWORK"); icon:SetSize(sz - 5, sz - 5); icon:SetPoint("CENTER"); icon:SetAlpha(0.75)
+    b.icon = icon
+    b:SetScript("OnEnter", function() icon:SetAlpha(1) end)
+    b:SetScript("OnLeave", function() icon:SetAlpha(0.75) end)
+    return b
+end
+
+-- EUI's 9-point anchor list (value -> label), in reading order.
+local ANCHOR_OPTIONS = {
+    { value = "TOPLEFT", text = "Top Left" }, { value = "TOP", text = "Top" }, { value = "TOPRIGHT", text = "Top Right" },
+    { value = "LEFT", text = "Left" }, { value = "CENTER", text = "Center" }, { value = "RIGHT", text = "Right" },
+    { value = "BOTTOMLEFT", text = "Bottom Left" }, { value = "BOTTOM", text = "Bottom" }, { value = "BOTTOMRIGHT", text = "Bottom Right" },
+}
+
+-- A row: label + on/off toggle + cog. The cog opens a flyout (EUI BuildCogPopup
+-- shape) with an Anchor dropdown + X/Y offset sliders (caps -100..100).
+local function makeReadoutRow(parent, y, label, getEnabled, setEnabled, getAnchor, setAnchor, getX, setX, getY, setY)
+    local rowIndex = parent._rows or 0; parent._rows = rowIndex + 1
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", UI.PAD, y); row:SetPoint("RIGHT", parent, "RIGHT", -UI.PAD, 0); row:SetHeight(UI.ROW_H)
+    SolidTex(row, "BACKGROUND", 1, 1, 1, (rowIndex % 2 == 0) and 0.03 or 0.06):SetAllPoints(row)
+    local lbl = MakeFont(row, 13, 0.88, 0.88, 0.9); lbl:SetPoint("LEFT", 8, 0); lbl:SetText(label)
+
+    local SZ = 20
+    local cog = makeIconButton(row, SZ); cog:SetPoint("RIGHT", -8, 0); cog.icon:SetTexture(COG_TEX)
+
+    -- inline toggle switch (makeToggle visual) to the left of the cog
+    local track = CreateFrame("Button", nil, row); track:SetSize(38, 16); track:SetPoint("RIGHT", cog, "LEFT", -8, 0)
+    local trackTex = SolidTex(track, "ARTWORK", 0.28, 0.28, 0.32, 1); trackTex:SetAllPoints(track)
+    local knob = track:CreateTexture(nil, "OVERLAY"); knob:SetSize(12, 12); knob:SetColorTexture(0.9, 0.9, 0.9, 1)
+    local function applyTog()
+        local on = getEnabled() and true or false
+        trackTex:SetColorTexture(on and ACCENT[1] or 0.28, on and ACCENT[2] or 0.28, on and ACCENT[3] or 0.32, on and 0.9 or 1)
+        knob:ClearAllPoints(); knob:SetPoint("LEFT", track, "LEFT", on and 24 or 2, 0)
+    end
+    applyTog()
+    track:SetScript("OnClick", function() setEnabled(not (getEnabled() and true or false)); applyTog() end)
+
+    local function buildFlyout()
+        local f = CreateFrame("Frame", nil, UIParent)
+        f:SetFrameStrata("FULLSCREEN_DIALOG"); f:SetToplevel(true); f:SetClampedToScreen(true)
+        f:SetSize(260, 10); f:SetPoint("TOPRIGHT", cog, "BOTTOMRIGHT", 0, -2)
+        SolidTex(f, "BACKGROUND", 0.075, 0.113, 0.141, 0.97):SetAllPoints(f)
+        MakeBorder(f, 1, 1, 1, 0.22)
+        f._rows = 0
+        local yy = -6
+        yy = yy - makeDropdown(f, "Anchor", yy, ANCHOR_OPTIONS, getAnchor, setAnchor)
+        yy = yy - makeSlider(f, "X Offset", yy, -100, 100, 1, getX, setX, function(v) return tostring(math.floor(v + 0.5)) end)
+        yy = yy - makeSlider(f, "Y Offset", yy, -100, 100, 1, getY, setY, function(v) return tostring(math.floor(v + 0.5)) end)
+        f:SetHeight(-yy + 6)
+        return f
+    end
+    cog:SetScript("OnClick", function()
+        if openFlyout then closeFlyout(); return end
+        openFlyout = buildFlyout(); openFlyout:Show()
+    end)
+    cog:SetScript("OnHide", closeFlyout)
+    cog:SetScript("OnEnter", function() cog.icon:SetAlpha(1)
+        GameTooltip:SetOwner(cog, "ANCHOR_RIGHT"); GameTooltip:SetText("Anchor & X/Y offset", 1, 1, 1); GameTooltip:Show() end)
+    cog:SetScript("OnLeave", function() cog.icon:SetAlpha(0.75); GameTooltip:Hide() end)
+
+    if activeRefreshers then activeRefreshers[#activeRefreshers + 1] = applyTog end
+    return UI.ROW_H
+end
+
 local function buildXPBar(wrapper)
     local X = ns.XP
     local full, two, gap, height = Columns(wrapper)
@@ -613,6 +690,22 @@ local function buildXPBar(wrapper)
         tog("Show text", "showText", "Level / XP% on the bar."))
     two(sld("Text X", "textX", -300, 300), sld("Text Y", "textY", -100, 100))
 
+    full(function(w, y) return makeSection(w, "Readouts", y) end)
+    full(function(w, y) return makeInfo(w,
+        "EUI-style stats around the bar. Toggle each on, then use its cog to pick a 9-point anchor and X/Y offset.", y) end)
+    for _, r in ipairs((X and X.ReadoutList()) or {}) do
+        local key = r.key
+        full(function(w, y) return makeReadoutRow(w, y, r.label,
+            function() return X and X.GetReadout(key).enabled end,
+            function(v) if X then X.SetReadoutEnabled(key, v) end end,
+            function() return (X and X.GetReadout(key).anchor) or "TOPLEFT" end,
+            function(v) if X then X.SetReadoutAnchor(key, v) end end,
+            function() return (X and X.GetReadout(key).x) or 0 end,
+            function(v) if X then X.SetReadoutPos(key, "x", v) end end,
+            function() return (X and X.GetReadout(key).y) or 0 end,
+            function(v) if X then X.SetReadoutPos(key, "y", v) end end) end)
+    end
+
     full(function(w, y) return makeSection(w, "Position & Size", y) end)
     two(sld("Position X", "x", -800, 800), sld("Position Y", "y", -800, 800))
     two(sld("Width", "width", 120, 1920), sld("Height", "height", 6, 40))
@@ -640,25 +733,6 @@ local function buildXPBar(wrapper)
     two(sld("Divider X", "dividerTextX", -40, 40), sld("Divider Y", "dividerTextY", -20, 20))
 
     return height()
-end
-
--- ---- eye / cog icon controls (EUI assets, copied into SFA/media) -------------
-local SFA_ICON = "Interface\\AddOns\\SimpleFrameAnchor\\media\\icons\\"
-local EYE_ON, EYE_OFF, COG_TEX = SFA_ICON .. "eui-visible.png", SFA_ICON .. "eui-invisible.png", SFA_ICON .. "cogs-3.png"
-
-local openFlyout
-local function closeFlyout() if openFlyout then openFlyout:Hide(); openFlyout = nil end end
-
-local function makeIconButton(parent, sz)
-    local b = CreateFrame("Button", nil, parent)
-    b:SetSize(sz, sz)
-    local bg = SolidTex(b, "BACKGROUND", 0.075, 0.113, 0.141, 0.9); bg:SetAllPoints(b)
-    MakeBorder(b, 1, 1, 1, 0.18)
-    local icon = b:CreateTexture(nil, "ARTWORK"); icon:SetSize(sz - 5, sz - 5); icon:SetPoint("CENTER"); icon:SetAlpha(0.75)
-    b.icon = icon
-    b:SetScript("OnEnter", function() icon:SetAlpha(1) end)
-    b:SetScript("OnLeave", function() icon:SetAlpha(0.75) end)
-    return b
 end
 
 -- Global "Duration Text" row: eye toggles text show/hide; cog opens a flyout with

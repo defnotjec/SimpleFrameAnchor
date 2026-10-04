@@ -20,6 +20,140 @@ local COLOR = {
     rested   = { 0.18, 0.30, 0.55 },
 }
 
+-- ============================================================================
+--  Readout text (EUI-style XP stats): Time this level, Level in, XP/hr,
+--  Quests %, Rested %, center cur/max(rem), right %(projected%). Each is an
+--  independent, anchorable, movable FontString (config in xdb().readouts).
+--  Time + rate use epoch time() (persists across reload/relog, no /played spam).
+-- ============================================================================
+local time = time
+local function FmtNum(n)
+    n = math.floor(n or 0)
+    if n < 10000 then return BreakUpLargeNumbers(n) end
+    return AbbreviateLargeNumbers(n)
+end
+local function FmtPct(v)
+    local t = math.floor((v or 0) * 10 + 0.5)
+    if t % 10 == 0 then return string.format("%d%%", t / 10) end
+    return string.format("%.1f%%", t / 10)
+end
+local function FmtDur(sec)
+    local m = math.floor(((sec and sec > 0) and sec or 0) / 60)
+    local h = math.floor(m / 60)
+    if h >= 24 then local dd = math.floor(h / 24); return string.format("%dd %dh", dd, h - dd * 24)
+    elseif h > 0 then return string.format("%dh %dm", h, m - h * 60) end
+    return string.format("%dm", m)
+end
+
+-- Readout definitions: key, menu label, default anchor + x/y (anchored point-to-same-
+-- point on the bar). All default OFF (opt-in).
+local READOUTS = {
+    { key = "timeLevel", label = "Time this level", anchor = "TOPLEFT",     x = 2,   y = 16 },
+    { key = "levelIn",   label = "Level in",        anchor = "TOP",         x = -90, y = 16 },
+    { key = "xpHr",      label = "XP / hour",       anchor = "TOP",         x = 30,  y = 16 },
+    { key = "quests",    label = "Quests %",        anchor = "TOPRIGHT",    x = -70, y = 16 },
+    { key = "rested",    label = "Rested %",        anchor = "TOPRIGHT",    x = 2,   y = 16 },
+    { key = "center",    label = "XP cur/max(rem)", anchor = "CENTER",      x = 0,   y = 0 },
+    { key = "rightPct",  label = "XP percent",      anchor = "RIGHT",       x = -6,  y = 0 },
+}
+
+-- Per-character tracking (XP/hr rate + level-start epoch), persisted in DB.
+local track
+local function Track()
+    if track then return track end
+    SimpleFrameAnchorDB = SimpleFrameAnchorDB or {}
+    SimpleFrameAnchorDB.xptrack = SimpleFrameAnchorDB.xptrack or {}
+    local guid = UnitGUID("player") or "player"
+    local t = SimpleFrameAnchorDB.xptrack[guid]
+    if type(t) ~= "table" then t = {}; SimpleFrameAnchorDB.xptrack[guid] = t end
+    track = t
+    return t
+end
+
+-- Time this level: epoch baseline, reset on level-up / first-seen.
+local function EnsureLevelBase()
+    local t = Track()
+    local lv = UnitLevel("player")
+    if t.lvl ~= lv or not t.lvlEpoch then t.lvl = lv; t.lvlEpoch = time() end
+end
+local function OnLevelUp()
+    local t = Track(); t.lvl = UnitLevel("player"); t.lvlEpoch = time()
+end
+local function TimeThisLevel()
+    local t = Track()
+    return t.lvlEpoch and (time() - t.lvlEpoch) or nil
+end
+
+-- XP/hr: gained since rStart (epoch); 0 until 60s + some gain. Persists across a
+-- reload (kept if < 6h old), resets otherwise.
+local function RateBaseline()
+    local t = Track()
+    t.rStart, t.gained = time(), 0
+    t.lastXP, t.lastMax, t.lastLevel = UnitXP("player"), UnitXPMax("player"), UnitLevel("player")
+end
+local function RateInit()
+    local t = Track()
+    if not (t.rStart and t.gained and (time() - t.rStart) < 6 * 3600) then RateBaseline() end
+end
+local function TrackRate()
+    local t = Track()
+    local cur, lv = UnitXP("player"), UnitLevel("player")
+    local lastXP, lastLv = t.lastXP, t.lastLevel
+    if not (lastXP and lastLv) then
+        t.lastXP, t.lastMax, t.lastLevel = cur, UnitXPMax("player"), lv; return
+    end
+    if lv == lastLv then
+        if cur > lastXP then t.gained = (t.gained or 0) + (cur - lastXP) end
+    elseif lv > lastLv then
+        t.gained = (t.gained or 0) + math.max(0, (t.lastMax or lastXP) - lastXP) + cur
+    end
+    t.lastXP, t.lastMax, t.lastLevel = cur, UnitXPMax("player"), lv
+end
+local function XPRate()
+    local t = Track()
+    local el = time() - (t.rStart or time())
+    if not t.gained or t.gained <= 0 or el < 60 then return 0 end
+    return t.gained * 3600 / el
+end
+
+-- Completed-quest reward XP (potential XP in turn-in-ready quests).
+local questXP = 0
+local function ScanQuestXP()
+    local total = 0
+    if GetQuestLogRewardXP and C_QuestLog and C_QuestLog.GetNumQuestLogEntries then
+        for i = 1, (C_QuestLog.GetNumQuestLogEntries() or 0) do
+            local q = C_QuestLog.GetQuestIDForLogIndex(i)
+            if q and q > 0 and C_QuestLog.IsComplete(q) then
+                total = total + (GetQuestLogRewardXP(q) or 0)
+            end
+        end
+    end
+    questXP = total
+    return total
+end
+
+local function ReadoutText(key)
+    local cur = UnitXP("player")
+    local mx = UnitXPMax("player"); if mx <= 0 then mx = 1 end
+    local rested = GetXPExhaustion() or 0
+    if key == "timeLevel" then
+        local s = TimeThisLevel(); return "Time this level: " .. (s and FmtDur(s) or "--")
+    elseif key == "levelIn" then
+        local r = XPRate(); return "Level in: " .. ((r > 0) and FmtDur((mx - cur) / r * 3600) or "--")
+    elseif key == "xpHr" then
+        return "XP/hr: " .. FmtNum(XPRate())
+    elseif key == "quests" then
+        return "Quests: " .. FmtPct(questXP / mx * 100)
+    elseif key == "rested" then
+        return "Rested: " .. FmtPct(rested / mx * 100)
+    elseif key == "center" then
+        return string.format("%s / %s (%s)", FmtNum(cur), FmtNum(mx), FmtNum(mx - cur))
+    elseif key == "rightPct" then
+        return FmtPct(cur / mx * 100) .. " (" .. FmtPct((cur + questXP) / mx * 100) .. ")"
+    end
+    return ""
+end
+
 -- ---- DB ---------------------------------------------------------------------
 local DEFAULTS = {
     enabled    = false,
@@ -52,6 +186,15 @@ local function xdb()
     if type(d) ~= "table" then d = {}; SimpleFrameAnchorDB.xpbar = d end
     for k, v in pairs(DEFAULTS) do
         if d[k] == nil then d[k] = v end
+    end
+    d.readouts = d.readouts or {}
+    for _, r in ipairs(READOUTS) do
+        local e = d.readouts[r.key]
+        if type(e) ~= "table" then e = {}; d.readouts[r.key] = e end
+        if e.enabled == nil then e.enabled = false end
+        e.anchor = e.anchor or r.anchor
+        if e.x == nil then e.x = r.x end
+        if e.y == nil then e.y = r.y end
     end
     return d
 end
@@ -345,6 +488,42 @@ local function PositionText()
     bar.Text:SetPoint("CENTER", bar.Overlay, "CENTER", d.textX or 0, d.textY or 0)
 end
 
+-- Anchor each readout FontString to the bar at its configured anchor + x/y
+-- (point-to-same-point on the bar, matching EUI's offset convention).
+local function PositionReadouts()
+    if not (bar and bar.RO) then return end
+    local d = xdb()
+    for _, r in ipairs(READOUTS) do
+        local fs = bar.RO[r.key]
+        local c = d.readouts[r.key]
+        if fs and c then
+            -- EUI convention: point-to-same-point on the bar; +X always moves inward
+            -- (flip on RIGHT anchors); justify text by the anchor side.
+            local p = c.anchor or r.anchor
+            local right = p:find("RIGHT", 1, true)
+            local x = c.x or 0
+            fs:ClearAllPoints()
+            fs:SetPoint(p, bar, p, right and -x or x, c.y or 0)
+            fs:SetJustifyH(right and "RIGHT" or (p:find("LEFT", 1, true) and "LEFT" or "CENTER"))
+        end
+    end
+end
+
+-- Set text + visibility for each readout (only when the bar is enabled + not max level).
+local function UpdateReadouts()
+    if not (bar and bar.RO) then return end
+    local d = xdb()
+    local live = d.enabled and not AtMaxLevel() and not (IsXPUserDisabled and IsXPUserDisabled())
+    for _, r in ipairs(READOUTS) do
+        local fs = bar.RO[r.key]
+        local c = d.readouts[r.key]
+        if fs and c then
+            if live and c.enabled then fs:SetText(ReadoutText(r.key)); fs:Show() else fs:Hide() end
+        end
+    end
+end
+XP.UpdateReadouts = UpdateReadouts
+
 -- Divider ticks (EUI model): full 10% lines in the divider-text color; optional 5% lines
 -- in their own colour with a style -- solid / dashed / dotted / none. All on the overlay
 -- (above the fill/flipbook). Width/height come from the holder's SetSize (resolved now),
@@ -428,6 +607,8 @@ local function Layout()
     ApplyFlipFill()
     DrawTicks()
     PositionText()
+    PositionReadouts()
+    UpdateReadouts()
 end
 
 local function EnsureBar()
@@ -468,12 +649,35 @@ local function EnsureBar()
     text:SetPoint("CENTER", overlay, "CENTER", 0, 0)
     bar.Text = text
 
+    -- Readout FontStrings (one per READOUTS entry), on the overlay above the fill.
+    bar.RO = {}
+    for _, r in ipairs(READOUTS) do
+        local fs = overlay:CreateFontString(nil, "OVERLAY")
+        fs:SetFontObject("GameFontHighlightSmall")
+        fs:Hide()
+        bar.RO[r.key] = fs
+    end
+
+    -- Init per-char tracking once.
+    RateInit(); EnsureLevelBase(); ScanQuestXP()
+
     local ev = CreateFrame("Frame")
     ev:RegisterEvent("PLAYER_XP_UPDATE")
     ev:RegisterEvent("PLAYER_LEVEL_UP")
     ev:RegisterEvent("UPDATE_EXHAUSTION")
     ev:RegisterEvent("PLAYER_ENTERING_WORLD")
-    ev:SetScript("OnEvent", UpdateXP)
+    ev:RegisterEvent("QUEST_LOG_UPDATE")
+    ev:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_LEVEL_UP" then OnLevelUp()
+        elseif event == "PLAYER_XP_UPDATE" then TrackRate()
+        elseif event == "QUEST_LOG_UPDATE" then ScanQuestXP()
+        elseif event == "PLAYER_ENTERING_WORLD" then EnsureLevelBase(); ScanQuestXP() end
+        UpdateXP()
+        UpdateReadouts()
+    end)
+
+    -- 1-minute ticker drives the time-based readouts (time this level / level in / XP/hr).
+    if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(60, UpdateReadouts) end
 
     Layout()
     return bar
@@ -579,6 +783,22 @@ end
 function XP.SetValue(key, v)
     xdb()[key] = v
     if bar then Layout(); UpdateXP() end
+end
+
+-- ---- readouts public API (for the /sfa Experience Bar pane) ------------------
+function XP.ReadoutList() return READOUTS end
+function XP.GetReadout(key) return xdb().readouts[key] end
+function XP.SetReadoutEnabled(key, on)
+    xdb().readouts[key].enabled = on and true or false
+    if bar then PositionReadouts(); UpdateReadouts() end
+end
+function XP.SetReadoutAnchor(key, a)
+    xdb().readouts[key].anchor = a
+    if bar then PositionReadouts() end
+end
+function XP.SetReadoutPos(key, axis, v)
+    xdb().readouts[key][axis] = v
+    if bar then PositionReadouts() end
 end
 
 -- ---- events -----------------------------------------------------------------
